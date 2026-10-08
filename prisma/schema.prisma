@@ -30,3 +30,71 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+// One row per store that uses the app
+model Shop {
+  id          String    @id @default(cuid())
+  domain      String    @unique
+  plan        Int       @default(1)
+  swapEnabled Boolean   @default(false)
+  consentAt   DateTime?
+  niche       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  ads            Ad[]
+  ledger         CreditLedger[]
+  clicksSent     Click[]        @relation("ClicksSent")
+  clicksReceived Click[]        @relation("ClicksReceived")
+}
+
+// The ad a store wants partner stores to show
+model Ad {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  title       String
+  text        String
+  destination String
+  code        String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  clicks Click[]
+
+  @@index([shopId])
+}
+
+// One row per click on a partner ad. The token can only be used once.
+model Click {
+  id               String    @id @default(cuid())
+  token            String    @unique
+  adId             String
+  ad               Ad        @relation(fields: [adId], references: [id], onDelete: Cascade)
+  senderShopId     String
+  sender           Shop      @relation("ClicksSent", fields: [senderShopId], references: [id], onDelete: Cascade)
+  advertiserShopId String
+  advertiser       Shop      @relation("ClicksReceived", fields: [advertiserShopId], references: [id], onDelete: Cascade)
+  status           String    @default("pending")
+  createdAt        DateTime  @default(now())
+  usedAt           DateTime?
+  settleAfter      DateTime?
+  settledAt        DateTime?
+
+  @@index([senderShopId, createdAt])
+  @@index([advertiserShopId, createdAt])
+  @@index([status, settleAfter])
+}
+
+// A running list of credits earned (+) and spent (-)
+model CreditLedger {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  delta     Int
+  reason    String
+  clickId   String?
+  createdAt DateTime @default(now())
+
+  @@index([shopId, createdAt])
+}
