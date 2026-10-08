@@ -10,10 +10,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const response = await admin.graphql(
     `#graphql
-    query ReadOffers {
+    query ReadSettings {
       shop {
         id
-        metafield(namespace: "$app", key: "offers") {
+        offers: metafield(namespace: "$app", key: "offers") {
+          value
+        }
+        enabled: metafield(namespace: "$app", key: "enabled") {
           value
         }
       }
@@ -22,18 +25,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const json = await response.json();
   let offers: { title: string; text: string; code: string }[] = [];
   try {
-    const raw = json.data?.shop?.metafield?.value;
+    const raw = json.data?.shop?.offers?.value;
     const parsed = raw ? JSON.parse(raw) : [];
     if (Array.isArray(parsed)) offers = parsed.slice(0, MAX_OFFERS);
   } catch (error) {
     offers = [];
   }
-  return { offers };
+  const enabled = json.data?.shop?.enabled?.value !== "false";
+  return { offers, enabled };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const form = await request.formData();
+
+  const enabled = form.get("enabled") !== null;
 
   const offers: { title: string; text: string; code: string }[] = [];
   for (let i = 1; i <= MAX_OFFERS; i++) {
@@ -56,7 +62,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const response = await admin.graphql(
     `#graphql
-    mutation SaveOffers($metafields: [MetafieldsSetInput!]!) {
+    mutation SaveSettings($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
         metafields {
           id
@@ -77,6 +83,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             type: "json",
             value: JSON.stringify(offers),
           },
+          {
+            ownerId: shopId,
+            namespace: "$app",
+            key: "enabled",
+            type: "single_line_text_field",
+            value: enabled ? "true" : "false",
+          },
         ],
       },
     },
@@ -86,55 +99,69 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (errors.length > 0) {
     return { ok: false, message: errors[0].message as string };
   }
-  return { ok: true, message: "Offers saved" };
+  return { ok: true, message: "Settings saved" };
 };
 
 export default function Index() {
-  const { offers } = useLoaderData<typeof loader>();
+  const { offers, enabled } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   const saving = fetcher.state !== "idle";
 
   useEffect(() => {
     if (fetcher.data?.ok) {
-      shopify.toast.show("Offers saved");
+      shopify.toast.show("Settings saved");
     }
   }, [fetcher.data, shopify]);
 
   return (
     <s-page heading="Your Thank you page offers">
-      <s-section heading="Offers (up to 3)">
-        <fetcher.Form method="post">
-          <s-stack gap="large">
-            {[0, 1, 2].map((i) => (
-              <s-stack key={i} gap="small">
-                <s-heading>Offer {i + 1}</s-heading>
-                <s-text-field
-                  label="Title"
-                  name={`title${i + 1}`}
-                  defaultValue={offers[i]?.title ?? ""}
-                />
-                <s-text-field
-                  label="Message"
-                  name={`text${i + 1}`}
-                  defaultValue={offers[i]?.text ?? ""}
-                />
-                <s-text-field
-                  label="Discount code (optional)"
-                  name={`code${i + 1}`}
-                  defaultValue={offers[i]?.code ?? ""}
-                />
-              </s-stack>
-            ))}
-            {fetcher.data && !fetcher.data.ok ? (
-              <s-banner tone="critical">{fetcher.data.message}</s-banner>
-            ) : null}
-            <s-button type="submit" variant="primary" loading={saving}>
-              Save offers
-            </s-button>
-          </s-stack>
-        </fetcher.Form>
-      </s-section>
+      <fetcher.Form method="post">
+        <s-stack gap="large">
+          <s-section heading="Main switch">
+            <s-switch
+              label="Show my offers on the Thank you page"
+              name="enabled"
+              defaultChecked={enabled}
+            />
+            <s-text>
+              When this is off, nothing shows on your Thank you page.
+            </s-text>
+          </s-section>
+
+          <s-section heading="Offers (up to 3)">
+            <s-stack gap="large">
+              {[0, 1, 2].map((i) => (
+                <s-stack key={i} gap="small">
+                  <s-heading>Offer {i + 1}</s-heading>
+                  <s-text-field
+                    label="Title"
+                    name={`title${i + 1}`}
+                    defaultValue={offers[i]?.title ?? ""}
+                  />
+                  <s-text-field
+                    label="Message"
+                    name={`text${i + 1}`}
+                    defaultValue={offers[i]?.text ?? ""}
+                  />
+                  <s-text-field
+                    label="Discount code (optional)"
+                    name={`code${i + 1}`}
+                    defaultValue={offers[i]?.code ?? ""}
+                  />
+                </s-stack>
+              ))}
+            </s-stack>
+          </s-section>
+
+          {fetcher.data && !fetcher.data.ok ? (
+            <s-banner tone="critical">{fetcher.data.message}</s-banner>
+          ) : null}
+          <s-button type="submit" variant="primary" loading={saving}>
+            Save settings
+          </s-button>
+        </s-stack>
+      </fetcher.Form>
     </s-page>
   );
 }

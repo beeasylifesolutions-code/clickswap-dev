@@ -13,13 +13,23 @@ export default async () => {
   render(<Extension />, document.body);
 };
 
-function readOffers() {
-  const entry = shopify.appMetafields.value.find(
+function findEntry(key) {
+  return shopify.appMetafields.value.find(
     (item) =>
       item.target.type === "shop" &&
       item.metafield.namespace === "$app" &&
-      item.metafield.key === "offers",
+      item.metafield.key === key,
   );
+}
+
+function readEnabled() {
+  const entry = findEntry("enabled");
+  if (!entry) return true;
+  return String(entry.metafield.value) !== "false";
+}
+
+function readOffers() {
+  const entry = findEntry("offers");
   if (!entry) return SAMPLE_OFFERS;
   try {
     const parsed = JSON.parse(entry.metafield.value);
@@ -32,6 +42,7 @@ function readOffers() {
 }
 
 function Extension() {
+  if (!readEnabled()) return null;
   const offers = readOffers();
   return (
     <s-stack gap="base">
