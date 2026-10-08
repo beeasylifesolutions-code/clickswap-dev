@@ -22,6 +22,19 @@ function findEntry(key) {
   );
 }
 
+function todayString() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+function isActive(offer, today) {
+  if (offer.start && offer.start > today) return false;
+  if (offer.end && offer.end < today) return false;
+  return true;
+}
+
 function readEnabled() {
   const entry = findEntry("enabled");
   if (!entry) return true;
@@ -33,9 +46,12 @@ function readOffers() {
   if (!entry) return SAMPLE_OFFERS;
   try {
     const parsed = JSON.parse(entry.metafield.value);
-    if (!Array.isArray(parsed)) return SAMPLE_OFFERS;
-    const valid = parsed.filter((offer) => offer && offer.title).slice(0, 3);
-    return valid.length > 0 ? valid : SAMPLE_OFFERS;
+    if (!Array.isArray(parsed) || parsed.length === 0) return SAMPLE_OFFERS;
+    const today = todayString();
+    return parsed
+      .filter((offer) => offer && offer.title)
+      .filter((offer) => isActive(offer, today))
+      .slice(0, 3);
   } catch (error) {
     return SAMPLE_OFFERS;
   }
@@ -44,6 +60,7 @@ function readOffers() {
 function Extension() {
   if (!readEnabled()) return null;
   const offers = readOffers();
+  if (offers.length === 0) return null;
   return (
     <s-stack gap="base">
       {offers.map((offer, index) => (

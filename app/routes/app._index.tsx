@@ -5,6 +5,15 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 
 const MAX_OFFERS = 3;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+type Offer = {
+  title: string;
+  text: string;
+  code: string;
+  start: string;
+  end: string;
+};
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
@@ -23,7 +32,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }`,
   );
   const json = await response.json();
-  let offers: { title: string; text: string; code: string }[] = [];
+  let offers: Offer[] = [];
   try {
     const raw = json.data?.shop?.offers?.value;
     const parsed = raw ? JSON.parse(raw) : [];
@@ -41,12 +50,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const enabled = form.get("enabled") !== null;
 
-  const offers: { title: string; text: string; code: string }[] = [];
+  const offers: Offer[] = [];
   for (let i = 1; i <= MAX_OFFERS; i++) {
     const title = String(form.get(`title${i}`) || "").trim().slice(0, 60);
     const text = String(form.get(`text${i}`) || "").trim().slice(0, 140);
     const code = String(form.get(`code${i}`) || "").trim().slice(0, 30);
-    if (title) offers.push({ title, text, code });
+    const startRaw = String(form.get(`start${i}`) || "").trim();
+    const endRaw = String(form.get(`end${i}`) || "").trim();
+    const start = DATE_PATTERN.test(startRaw) ? startRaw : "";
+    const end = DATE_PATTERN.test(endRaw) ? endRaw : "";
+    if (start && end && end < start) {
+      return {
+        ok: false,
+        message: `Offer ${i}: the end date must be after the start date.`,
+      };
+    }
+    if (title) offers.push({ title, text, code, start, end });
   }
 
   const shopResponse = await admin.graphql(
@@ -148,6 +167,16 @@ export default function Index() {
                     label="Discount code (optional)"
                     name={`code${i + 1}`}
                     defaultValue={offers[i]?.code ?? ""}
+                  />
+                  <s-date-field
+                    label="Start date (optional)"
+                    name={`start${i + 1}`}
+                    defaultValue={offers[i]?.start ?? ""}
+                  />
+                  <s-date-field
+                    label="End date (optional)"
+                    name={`end${i + 1}`}
+                    defaultValue={offers[i]?.end ?? ""}
                   />
                 </s-stack>
               ))}
