@@ -1,3 +1,4 @@
+// @ts-nocheck
 import '@shopify/ui-extensions/preact';
 import {render} from "preact";
 
@@ -41,6 +42,13 @@ function readEnabled() {
   return String(entry.metafield.value) !== "false";
 }
 
+function readPlan() {
+  const entry = findEntry("plan");
+  if (!entry) return 1;
+  const number = Number(entry.metafield.value);
+  return number === 2 || number === 3 ? number : 1;
+}
+
 function readOffers() {
   const entry = findEntry("offers");
   if (!entry) return SAMPLE_OFFERS;
@@ -49,9 +57,9 @@ function readOffers() {
     if (!Array.isArray(parsed) || parsed.length === 0) return SAMPLE_OFFERS;
     const today = todayString();
     return parsed
+      .slice(0, readPlan())
       .filter((offer) => offer && offer.title)
-      .filter((offer) => isActive(offer, today))
-      .slice(0, 3);
+      .filter((offer) => isActive(offer, today));
   } catch (error) {
     return SAMPLE_OFFERS;
   }

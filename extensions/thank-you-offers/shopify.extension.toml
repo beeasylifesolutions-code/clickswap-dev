@@ -48,6 +48,11 @@ api_access = true
 [[extensions.metafields]]
 namespace = "$app"
 key = "offers"
+
 [[extensions.metafields]]
 namespace = "$app"
 key = "enabled"
+
+[[extensions.metafields]]
+namespace = "$app"
+key = "plan"

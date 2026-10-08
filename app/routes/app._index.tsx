@@ -15,6 +15,11 @@ type Offer = {
   end: string;
 };
 
+const parsePlan = (value: unknown) => {
+  const number = Number(value);
+  return number === 2 || number === 3 ? number : 1;
+};
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const response = await admin.graphql(
@@ -26,6 +31,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           value
         }
         enabled: metafield(namespace: "$app", key: "enabled") {
+          value
+        }
+        plan: metafield(namespace: "$app", key: "plan") {
           value
         }
       }
@@ -41,7 +49,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     offers = [];
   }
   const enabled = json.data?.shop?.enabled?.value !== "false";
-  return { offers, enabled };
+  const plan = parsePlan(json.data?.shop?.plan?.value);
+  return { offers, enabled, plan };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -49,9 +58,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
 
   const enabled = form.get("enabled") !== null;
+  const plan = parsePlan(form.get("plan"));
 
   const offers: Offer[] = [];
-  for (let i = 1; i <= MAX_OFFERS; i++) {
+  for (let i = 1; i <= plan; i++) {
     const title = String(form.get(`title${i}`) || "").trim().slice(0, 60);
     const text = String(form.get(`text${i}`) || "").trim().slice(0, 140);
     const code = String(form.get(`code${i}`) || "").trim().slice(0, 30);
@@ -109,6 +119,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             type: "single_line_text_field",
             value: enabled ? "true" : "false",
           },
+          {
+            ownerId: shopId,
+            namespace: "$app",
+            key: "plan",
+            type: "single_line_text_field",
+            value: String(plan),
+          },
         ],
       },
     },
@@ -125,11 +142,12 @@ const valueOf = (event: Event) =>
   (event.currentTarget as HTMLInputElement).value;
 
 export default function Index() {
-  const { offers, enabled } = useLoaderData<typeof loader>();
+  const { offers, enabled, plan: savedPlan } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   const saving = fetcher.state !== "idle";
 
+  const [plan, setPlan] = useState(savedPlan);
   const [drafts, setDrafts] = useState(() =>
     [0, 1, 2].map((i) => ({
       title: offers[i]?.title ?? "",
@@ -152,7 +170,9 @@ export default function Index() {
     }
   }, [fetcher.data, shopify]);
 
-  const previewOffers = drafts.filter((draft) => draft.title.trim() !== "");
+  const previewOffers = drafts
+    .slice(0, plan)
+    .filter((draft) => draft.title.trim() !== "");
 
   return (
     <s-page heading="Your Thank you page offers">
@@ -169,6 +189,22 @@ export default function Index() {
             </s-text>
           </s-section>
 
+          <s-section heading="Plan (testing only)">
+            <s-select
+              label="Pick a plan"
+              name="plan"
+              value={String(plan)}
+              onChange={(event: Event) => setPlan(parsePlan(valueOf(event)))}
+            >
+              <s-option value="1">Tier 1: $40 per month, 1 slot</s-option>
+              <s-option value="2">Tier 2: $80 per month, 2 slots</s-option>
+              <s-option value="3">Tier 3: $160 per month, 3 slots</s-option>
+            </s-select>
+            <s-text>
+              This picker is temporary. Real billing replaces it later.
+            </s-text>
+          </s-section>
+
           <s-section heading="Live preview">
             <s-stack gap="base">
               {previewOffers.length === 0 ? (
@@ -181,7 +217,7 @@ export default function Index() {
                     <s-stack gap="base">
                       {draft.text ? <s-text>{draft.text}</s-text> : null}
                       {draft.code ? (
-                        <s-text type="emphasis">Code: {draft.code}</s-text>
+                        <s-text type="strong">Code: {draft.code}</s-text>
                       ) : null}
                     </s-stack>
                   </s-banner>
@@ -190,9 +226,9 @@ export default function Index() {
             </s-stack>
           </s-section>
 
-          <s-section heading="Offers (up to 3)">
+          <s-section heading={`Offers (your plan allows ${plan})`}>
             <s-stack gap="large">
-              {[0, 1, 2].map((i) => (
+              {[0, 1, 2].slice(0, plan).map((i) => (
                 <s-stack key={i} gap="small">
                   <s-heading>Offer {i + 1}</s-heading>
                   <s-text-field
