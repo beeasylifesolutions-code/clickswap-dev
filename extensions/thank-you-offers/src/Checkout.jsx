@@ -1,6 +1,10 @@
 // @ts-nocheck
 import '@shopify/ui-extensions/preact';
 import {render} from "preact";
+import {useState, useEffect} from "preact/hooks";
+
+// Leave empty to call your own app's address (relative URL).
+const APP_URL = "https://vitamin-evaluate-improving-initiatives.trycloudflare.com";
 
 const SAMPLE_OFFERS = [
   {
@@ -65,22 +69,63 @@ function readOffers() {
   }
 }
 
+// Asks your server for a swap ad. Any problem just means "no swap ad".
+async function loadSwapAd() {
+  try {
+    const token = await shopify.sessionToken.get();
+    const response = await fetch(`${APP_URL}/api/ad`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      return { ad: null, debug: "server said " + response.status };
+    }
+    const data = await response.json();
+    const ad = data && data.ad ? data.ad : null;
+    return { ad, debug: ad ? "ad found" : "server sent no ad" };
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    return { ad: null, debug: "failed: " + message };
+  }
+}
+
 function Extension() {
+  const [swapAd, setSwapAd] = useState(null);
+  const [debug, setDebug] = useState("waiting");
+
+  useEffect(() => {
+    if (!readEnabled()) return;
+    loadSwapAd().then((result) => {
+      setSwapAd(result.ad);
+      setDebug(result.debug);
+    });
+  }, []);
+
   if (!readEnabled()) return null;
-  const offers = readOffers();
-  if (offers.length === 0) return null;
+
+  const slots = readPlan();
+  const own = readOffers();
+  const items = swapAd
+    ? [{ ...swapAd, sponsored: true }, ...own].slice(0, slots)
+    : own;
+
   return (
     <s-stack gap="base">
-      {offers.map((offer, index) => (
+      {items.map((offer, index) => (
         <s-banner key={index} heading={offer.title}>
           <s-stack gap="base">
+            {offer.sponsored ? <s-text>Sponsored</s-text> : null}
             {offer.text ? <s-text>{offer.text}</s-text> : null}
             {offer.code ? (
               <s-text type="emphasis">Code: {offer.code}</s-text>
             ) : null}
+            {offer.sponsored && offer.destination ? (
+              <s-link href={offer.destination}>Visit store</s-link>
+            ) : null}
           </s-stack>
         </s-banner>
       ))}
+      <s-text>Swap debug: {debug}</s-text>
     </s-stack>
   );
 }
