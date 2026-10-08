@@ -119,8 +119,8 @@ function Extension() {
             {offer.code ? (
               <s-text type="emphasis">Code: {offer.code}</s-text>
             ) : null}
-            {offer.sponsored && offer.destination ? (
-              <s-link href={offer.destination}>Visit store</s-link>
+            {offer.sponsored && offer.token ? (
+              <s-link href={`${APP_URL}/click/${offer.token}`}>Visit store</s-link>
             ) : null}
           </s-stack>
         </s-banner>

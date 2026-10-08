@@ -1,0 +1,38 @@
+import type { LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
+import prisma from "../db.server";
+
+const TOKEN_LIFETIME_MS = 24 * 60 * 60 * 1000; // a token works for 24 hours
+const SETTLEMENT_HOLD_MS = 24 * 60 * 60 * 1000; // credit is held 24 hours
+
+export const loader = async ({ params }: LoaderFunctionArgs) => {
+  const token = String(params.token ?? "");
+
+  const click = await prisma.click.findUnique({ where: { token } });
+  if (!click) {
+    throw new Response("Link not found", { status: 404 });
+  }
+
+  const ad = await prisma.ad.findUnique({ where: { id: click.adId } });
+  if (!ad) {
+    throw new Response("Link not found", { status: 404 });
+  }
+
+  // Single use: only the first visit can claim a pending token
+  const now = new Date();
+  await prisma.click.updateMany({
+    where: {
+      id: click.id,
+      status: "pending",
+      createdAt: { gte: new Date(now.getTime() - TOKEN_LIFETIME_MS) },
+    },
+    data: {
+      status: "clicked",
+      usedAt: now,
+      settleAfter: new Date(now.getTime() + SETTLEMENT_HOLD_MS),
+    },
+  });
+
+  // The shopper always gets sent on, whether or not the click counted
+  return redirect(ad.destination);
+};

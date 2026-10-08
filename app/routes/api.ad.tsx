@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -18,6 +19,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return cors(Response.json({ ad: null }));
   }
 
+  // Ads come only from OTHER stores that also have swap on
   const ads = await prisma.ad.findMany({
     where: {
       active: true,
@@ -34,6 +36,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const ad = ads[Math.floor(Math.random() * ads.length)];
+
+  // One single-use token per ad shown
+  const token = randomBytes(24).toString("hex");
+  await prisma.click.create({
+    data: {
+      token,
+      adId: ad.id,
+      senderShopId: me.id,
+      advertiserShopId: ad.shopId,
+    },
+  });
+
   return cors(
     Response.json({
       ad: {
@@ -41,7 +55,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         title: ad.title,
         text: ad.text,
         code: ad.code,
-        destination: ad.destination,
+        token,
       },
     }),
   );
