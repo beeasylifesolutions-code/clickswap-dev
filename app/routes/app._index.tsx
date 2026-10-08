@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -121,17 +121,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { ok: true, message: "Settings saved" };
 };
 
+const valueOf = (event: Event) =>
+  (event.currentTarget as HTMLInputElement).value;
+
 export default function Index() {
   const { offers, enabled } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   const saving = fetcher.state !== "idle";
 
+  const [drafts, setDrafts] = useState(() =>
+    [0, 1, 2].map((i) => ({
+      title: offers[i]?.title ?? "",
+      text: offers[i]?.text ?? "",
+      code: offers[i]?.code ?? "",
+    })),
+  );
+
+  const update = (index: number, field: string, value: string) => {
+    setDrafts((previous) =>
+      previous.map((draft, i) =>
+        i === index ? { ...draft, [field]: value } : draft,
+      ),
+    );
+  };
+
   useEffect(() => {
     if (fetcher.data?.ok) {
       shopify.toast.show("Settings saved");
     }
   }, [fetcher.data, shopify]);
+
+  const previewOffers = drafts.filter((draft) => draft.title.trim() !== "");
 
   return (
     <s-page heading="Your Thank you page offers">
@@ -148,6 +169,27 @@ export default function Index() {
             </s-text>
           </s-section>
 
+          <s-section heading="Live preview">
+            <s-stack gap="base">
+              {previewOffers.length === 0 ? (
+                <s-text>
+                  Type a title in Offer 1 below and your preview shows up here.
+                </s-text>
+              ) : (
+                previewOffers.map((draft, index) => (
+                  <s-banner key={index} heading={draft.title}>
+                    <s-stack gap="base">
+                      {draft.text ? <s-text>{draft.text}</s-text> : null}
+                      {draft.code ? (
+                        <s-text type="emphasis">Code: {draft.code}</s-text>
+                      ) : null}
+                    </s-stack>
+                  </s-banner>
+                ))
+              )}
+            </s-stack>
+          </s-section>
+
           <s-section heading="Offers (up to 3)">
             <s-stack gap="large">
               {[0, 1, 2].map((i) => (
@@ -157,16 +199,25 @@ export default function Index() {
                     label="Title"
                     name={`title${i + 1}`}
                     defaultValue={offers[i]?.title ?? ""}
+                    onInput={(event: Event) =>
+                      update(i, "title", valueOf(event))
+                    }
                   />
                   <s-text-field
                     label="Message"
                     name={`text${i + 1}`}
                     defaultValue={offers[i]?.text ?? ""}
+                    onInput={(event: Event) =>
+                      update(i, "text", valueOf(event))
+                    }
                   />
                   <s-text-field
                     label="Discount code (optional)"
                     name={`code${i + 1}`}
                     defaultValue={offers[i]?.code ?? ""}
+                    onInput={(event: Event) =>
+                      update(i, "code", valueOf(event))
+                    }
                   />
                   <s-date-field
                     label="Start date (optional)"
