@@ -3,6 +3,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
 const MAX_OFFERS = 3;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -21,7 +22,16 @@ const parsePlan = (value: unknown) => {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  try {
+    await prisma.shop.upsert({
+      where: { domain: session.shop },
+      update: {},
+      create: { domain: session.shop },
+    });
+  } catch (error) {
+    console.error("Could not save shop", error);
+  }
   const response = await admin.graphql(
     `#graphql
     query ReadSettings {
