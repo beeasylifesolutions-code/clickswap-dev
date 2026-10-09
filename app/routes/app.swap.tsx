@@ -4,6 +4,11 @@ import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import {
+  MINIMUM_ORDERS,
+  meetsMinimum,
+  refreshOrderCount,
+} from "../orders.server";
 
 const STARTER_CREDITS = 10;
 
@@ -11,7 +16,7 @@ const clean = (value: FormDataEntryValue | null, max: number) =>
   String(value ?? "").trim().slice(0, max);
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const shop = await prisma.shop.upsert({
     where: { domain: session.shop },
     update: {},
@@ -22,6 +27,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where: { shopId: shop.id },
     _sum: { delta: true },
   });
+
+  // Re-check the order count at most once an hour
+  let orders = shop.ordersLast30;
+  const stale =
+    !shop.ordersCheckedAt ||
+    Date.now() - shop.ordersCheckedAt.getTime() > 60 * 60 * 1000;
+  if (stale) {
+    try {
+      orders = await refreshOrderCount(admin, session.shop);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   return {
     title: ad?.title ?? "",
     text: ad?.text ?? "",
@@ -30,11 +49,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     swapEnabled: shop.swapEnabled,
     consent: shop.consentAt !== null,
     balance: balance._sum.delta ?? 0,
+    orders,
+    minimum: MINIMUM_ORDERS,
+    eligible: meetsMinimum(orders),
   };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const form = await request.formData();
 
   const title = clean(form.get("title"), 60);
@@ -68,6 +90,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     update: {},
     create: { domain: session.shop },
   });
+
+  if (wantsSwap) {
+    let orders = 0;
+    try {
+      orders = await refreshOrderCount(admin, session.shop);
+    } catch (error) {
+      console.error(error);
+      return {
+        ok: false,
+        error: "We could not check your order count. Please try again.",
+      };
+    }
+    if (!meetsMinimum(orders)) {
+      return {
+        ok: false,
+        error: `Swap needs ${MINIMUM_ORDERS} paid orders in the last 30 days. Your store has ${orders}.`,
+      };
+    }
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.shop.update({
@@ -133,6 +174,11 @@ export default function SwapPage() {
               <s-text type="strong">
                 Your credit balance: {saved.balance}
               </s-text>
+              <s-banner tone={saved.eligible ? "success" : "warning"}>
+                {saved.eligible
+                  ? `Your store has ${saved.orders} paid orders in the last 30 days. Swap is available.`
+                  : `Swap needs ${saved.minimum} paid orders in the last 30 days. Your store has ${saved.orders}. You can still use your own offers.`}
+              </s-banner>
               <s-text>
                 You earn 1 credit when a shopper clicks another store's ad on
                 your Thank you page. You spend 1 credit when a shopper clicks
