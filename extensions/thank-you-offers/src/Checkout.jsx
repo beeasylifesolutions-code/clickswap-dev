@@ -125,7 +125,6 @@ function Extension() {
           </s-stack>
         </s-banner>
       ))}
-      <s-text>Swap debug: {debug}</s-text>
     </s-stack>
   );
 }
