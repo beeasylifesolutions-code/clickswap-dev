@@ -39,6 +39,8 @@ model Shop {
   swapEnabled Boolean   @default(false)
   consentAt   DateTime?
   niche       String?
+  ordersLast30    Int       @default(0)
+  ordersCheckedAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

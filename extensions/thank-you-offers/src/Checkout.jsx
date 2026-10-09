@@ -4,7 +4,7 @@ import {render} from "preact";
 import {useState, useEffect} from "preact/hooks";
 
 // Leave empty to call your own app's address (relative URL).
-const APP_URL = "https://idea-mba-advanced-tourism.trycloudflare.com";
+const APP_URL = "https://evaluating-useful-entry-sequence.trycloudflare.com";
 
 const SAMPLE_OFFERS = [
   {
