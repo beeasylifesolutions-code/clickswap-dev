@@ -5,6 +5,8 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
+const STARTER_CREDITS = 10;
+
 const clean = (value: FormDataEntryValue | null, max: number) =>
   String(value ?? "").trim().slice(0, max);
 
@@ -16,6 +18,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     create: { domain: session.shop },
   });
   const ad = await prisma.ad.findFirst({ where: { shopId: shop.id } });
+  const balance = await prisma.creditLedger.aggregate({
+    where: { shopId: shop.id },
+    _sum: { delta: true },
+  });
   return {
     title: ad?.title ?? "",
     text: ad?.text ?? "",
@@ -23,6 +29,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     code: ad?.code ?? "",
     swapEnabled: shop.swapEnabled,
     consent: shop.consentAt !== null,
+    balance: balance._sum.delta ?? 0,
   };
 };
 
@@ -62,12 +69,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     create: { domain: session.shop },
   });
 
-  await prisma.shop.update({
-    where: { id: shop.id },
-    data: {
-      swapEnabled: consent && wantsSwap,
-      consentAt: consent ? (shop.consentAt ?? new Date()) : null,
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.shop.update({
+      where: { id: shop.id },
+      data: {
+        swapEnabled: consent && wantsSwap,
+        consentAt: consent ? (shop.consentAt ?? new Date()) : null,
+      },
+    });
+
+    // Starter credits are given once per store, ever
+    if (consent) {
+      const alreadyGiven = await tx.creditLedger.findFirst({
+        where: { shopId: shop.id, reason: "starter_credits" },
+      });
+      if (!alreadyGiven) {
+        await tx.creditLedger.create({
+          data: {
+            shopId: shop.id,
+            delta: STARTER_CREDITS,
+            reason: "starter_credits",
+          },
+        });
+      }
+    }
   });
 
   const existing = await prisma.ad.findFirst({ where: { shopId: shop.id } });
@@ -105,6 +130,15 @@ export default function SwapPage() {
         <s-stack direction="block" gap="base">
           <s-section heading="Swap">
             <s-stack direction="block" gap="base">
+              <s-text type="strong">
+                Your credit balance: {saved.balance}
+              </s-text>
+              <s-text>
+                You earn 1 credit when a shopper clicks another store's ad on
+                your Thank you page. You spend 1 credit when a shopper clicks
+                your ad on another store's page. New stores get 10 free credits
+                when they first agree below.
+              </s-text>
               <s-text>
                 When swap is on, other stores show your ad on their Thank you
                 page, and your Thank you page can show ads from other stores.

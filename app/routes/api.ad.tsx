@@ -20,7 +20,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   // Ads come only from OTHER stores that also have swap on
-  const ads = await prisma.ad.findMany({
+  const candidates = await prisma.ad.findMany({
     where: {
       active: true,
       shop: {
@@ -31,6 +31,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     },
     take: 50,
   });
+
+  // Skip advertisers that have run out of credits
+  const shopIds = [...new Set(candidates.map((ad) => ad.shopId))];
+  const balances = await prisma.creditLedger.groupBy({
+    by: ["shopId"],
+    where: { shopId: { in: shopIds } },
+    _sum: { delta: true },
+  });
+  const funded = new Set(
+    balances.filter((row) => (row._sum.delta ?? 0) >= 1).map((row) => row.shopId),
+  );
+  const ads = candidates.filter((ad) => funded.has(ad.shopId));
+
   if (ads.length === 0) {
     return cors(Response.json({ ad: null }));
   }
