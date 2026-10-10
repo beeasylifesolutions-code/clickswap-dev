@@ -5,6 +5,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
+// Every plan has the same number of slots and own offers
 const MAX_OFFERS = 3;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -71,7 +72,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const plan = parsePlan(form.get("plan"));
 
   const offers: Offer[] = [];
-  for (let i = 1; i <= plan; i++) {
+  for (let i = 1; i <= MAX_OFFERS; i++) {
     const title = String(form.get(`title${i}`) || "").trim().slice(0, 60);
     const text = String(form.get(`text${i}`) || "").trim().slice(0, 140);
     const code = String(form.get(`code${i}`) || "").trim().slice(0, 30);
@@ -180,9 +181,7 @@ export default function Index() {
     }
   }, [fetcher.data, shopify]);
 
-  const previewOffers = drafts
-    .slice(0, plan)
-    .filter((draft) => draft.title.trim() !== "");
+  const previewOffers = drafts.filter((draft) => draft.title.trim() !== "");
 
   return (
     <s-page heading="Your Thank you page offers">
@@ -206,12 +205,13 @@ export default function Index() {
               value={String(plan)}
               onChange={(event: Event) => setPlan(parsePlan(valueOf(event)))}
             >
-              <s-option value="1">Tier 1: $40 per month, 1 slot</s-option>
-              <s-option value="2">Tier 2: $80 per month, 2 slots</s-option>
-              <s-option value="3">Tier 3: $160 per month, 3 slots</s-option>
+              <s-option value="1">Tier 1: $40 per month (1,500+ orders)</s-option>
+              <s-option value="2">Tier 2: $80 per month (3,000+ orders)</s-option>
+              <s-option value="3">Tier 3: $160 per month (6,000+ orders)</s-option>
             </s-select>
             <s-text>
-              This picker is temporary. Real billing replaces it later.
+              Every plan has 3 slots. Plans differ by order minimum and daily
+              limits. This picker is temporary. Real billing replaces it later.
             </s-text>
           </s-section>
 
@@ -236,9 +236,9 @@ export default function Index() {
             </s-stack>
           </s-section>
 
-          <s-section heading={`Offers (your plan allows ${plan})`}>
+          <s-section heading={`Offers (up to ${MAX_OFFERS})`}>
             <s-stack gap="large">
-              {[0, 1, 2].slice(0, plan).map((i) => (
+              {[0, 1, 2].map((i) => (
                 <s-stack key={i} gap="small">
                   <s-heading>Offer {i + 1}</s-heading>
                   <s-text-field

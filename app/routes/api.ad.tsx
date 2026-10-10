@@ -4,6 +4,9 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { meetsMinimum } from "../orders.server";
 
+// Every tier gets the same number of ad slots
+const MAX_SLOTS = 3;
+
 // Handles the "preflight" check Shopify sends before the real request
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.public.checkout(request);
@@ -23,7 +26,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     !me.consentAt ||
     !meetsMinimum(me.ordersLast30)
   ) {
-    return cors(Response.json({ ad: null }));
+    return cors(Response.json({ ads: [] }));
   }
 
   // Ads come only from OTHER stores that also have swap on
@@ -58,31 +61,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const ads = eligible.filter((ad) => funded.has(ad.shopId));
 
   if (ads.length === 0) {
-    return cors(Response.json({ ad: null }));
+    return cors(Response.json({ ads: [] }));
   }
 
-  const ad = ads[Math.floor(Math.random() * ads.length)];
+  // Pick up to MAX_SLOTS ads, never two from the same store
+  const shuffled = [...ads].sort(() => Math.random() - 0.5);
+  const seenShops = new Set<string>();
+  const chosen: typeof ads = [];
+  for (const ad of shuffled) {
+    if (seenShops.has(ad.shopId)) continue;
+    seenShops.add(ad.shopId);
+    chosen.push(ad);
+    if (chosen.length === MAX_SLOTS) break;
+  }
 
   // One single-use token per ad shown
-  const token = randomBytes(24).toString("hex");
-  await prisma.click.create({
-    data: {
+  const rows = chosen.map((ad) => ({
+    ad,
+    token: randomBytes(24).toString("hex"),
+  }));
+  await prisma.click.createMany({
+    data: rows.map(({ ad, token }) => ({
       token,
       adId: ad.id,
       senderShopId: me.id,
       advertiserShopId: ad.shopId,
-    },
+    })),
   });
 
   return cors(
     Response.json({
-      ad: {
+      ads: rows.map(({ ad, token }) => ({
         id: ad.id,
         title: ad.title,
         text: ad.text,
         code: ad.code,
         token,
-      },
+      })),
     }),
   );
 };
