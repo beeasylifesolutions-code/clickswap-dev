@@ -4,7 +4,7 @@ import {render} from "preact";
 import {useState, useEffect} from "preact/hooks";
 
 // The address of your app server. It changes each time the dev tunnel restarts.
-const APP_URL = "https://encourage-belkin-adsl-responses.trycloudflare.com";
+const APP_URL = "https://clickswap-dev.onrender.com";
 
 // Every tier shows the same number of ad slots.
 const SLOTS = 3;

@@ -2,7 +2,7 @@
 
 client_id = "34a6295cdf0c02a141d3f3cc0a2c8464"
 name = "clickswap-dev"
-application_url = "https://example.com"
+application_url = "https://clickswap-dev.onrender.com"
 embedded = true
 
 [access_scopes]
@@ -45,8 +45,8 @@ api_version = "2027-01"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://clickswap-dev.onrender.com/api/auth" ]
 
 [build]
 include_config_on_deploy = true
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
