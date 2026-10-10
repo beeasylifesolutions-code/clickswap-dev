@@ -1,5 +1,16 @@
 import prisma from "./db.server";
 
+// Limits that stop any one store from earning too many credits.
+// To change a limit, change the number here. Nothing else needs to change.
+const DAILY_EARN_CAP: Record<number, number> = { 1: 30, 2: 75, 3: 200 };
+const BALANCE_CEILING_FACTOR = 10; // a store can hold at most (daily cap x 10) credits
+const PAIR_DAILY_CAP = 10; // paid clicks per day from one store to the same advertiser
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function dailyCapFor(plan: number | null | undefined) {
+  return DAILY_EARN_CAP[plan ?? 1] ?? DAILY_EARN_CAP[1];
+}
+
 // Pays out clicks whose 24-hour waiting period is over.
 export async function settleClicks(limit = 200) {
   const now = new Date();
@@ -11,6 +22,7 @@ export async function settleClicks(limit = 200) {
 
   let settled = 0;
   let unfunded = 0;
+  let capped = 0;
   let skipped = 0;
 
   for (const click of due) {
@@ -21,6 +33,53 @@ export async function settleClicks(limit = 200) {
         data: { status: "settled", settledAt: new Date() },
       });
       if (claimed.count === 0) return "skipped";
+
+      // A capped click pays nothing and costs the advertiser nothing
+      const markCapped = async () => {
+        await tx.click.update({
+          where: { id: click.id },
+          data: { status: "capped" },
+        });
+        return "capped" as const;
+      };
+
+      const sender = await tx.shop.findUnique({
+        where: { id: click.senderShopId },
+        select: { plan: true },
+      });
+      const dailyCap = dailyCapFor(sender?.plan);
+      const since = new Date(Date.now() - DAY_MS);
+
+      // Rule 1: a store can only earn so many credits per day
+      const earnedToday = await tx.creditLedger.count({
+        where: {
+          shopId: click.senderShopId,
+          reason: "click_sent",
+          createdAt: { gte: since },
+        },
+      });
+      if (earnedToday >= dailyCap) return markCapped();
+
+      // Rule 2: only so many paid clicks per day between the same two stores.
+      // This click is already marked settled, so it counts itself.
+      const pairToday = await tx.click.count({
+        where: {
+          senderShopId: click.senderShopId,
+          advertiserShopId: click.advertiserShopId,
+          status: "settled",
+          settledAt: { gte: since },
+        },
+      });
+      if (pairToday > PAIR_DAILY_CAP) return markCapped();
+
+      // Rule 3: a store cannot pile up more than the balance ceiling
+      const senderBalance = await tx.creditLedger.aggregate({
+        where: { shopId: click.senderShopId },
+        _sum: { delta: true },
+      });
+      if ((senderBalance._sum.delta ?? 0) >= dailyCap * BALANCE_CEILING_FACTOR) {
+        return markCapped();
+      }
 
       // The advertiser must have at least 1 credit to spend
       const balance = await tx.creditLedger.aggregate({
@@ -56,8 +115,9 @@ export async function settleClicks(limit = 200) {
 
     if (result === "settled") settled += 1;
     else if (result === "unfunded") unfunded += 1;
+    else if (result === "capped") capped += 1;
     else skipped += 1;
   }
 
-  return { checked: due.length, settled, unfunded, skipped };
+  return { checked: due.length, settled, unfunded, capped, skipped };
 }
