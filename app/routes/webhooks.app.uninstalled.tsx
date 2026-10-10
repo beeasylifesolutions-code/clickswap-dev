@@ -1,16 +1,26 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import prisma from "../db.server";
 
+// When a store uninstalls: remove its login sessions, switch swap off and pause its ads
+// so partner stores stop showing them. Full deletion comes later via the shop/redact notice.
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
+  const { shop, topic } = await authenticate.webhook(request);
 
   console.log(`Received ${topic} webhook for ${shop}`);
 
-  // Webhook requests can trigger multiple times and after an app has already been uninstalled.
-  // If this webhook already ran, the session may have been deleted previously.
-  if (session) {
-    await db.session.deleteMany({ where: { shop } });
+  await prisma.session.deleteMany({ where: { shop } });
+
+  const record = await prisma.shop.findUnique({ where: { domain: shop } });
+  if (record) {
+    await prisma.shop.update({
+      where: { id: record.id },
+      data: { swapEnabled: false },
+    });
+    await prisma.ad.updateMany({
+      where: { shopId: record.id },
+      data: { active: false },
+    });
   }
 
   return new Response();
