@@ -30,9 +30,10 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>A short heading about [your app]</h1>
+        <h1 className={styles.heading}>Thank You page offers and traffic swap</h1>
         <p className={styles.text}>
-          A tagline about [your app] that describes your value proposition.
+          Turn your order confirmation page into a second chance to sell, and
+          swap traffic with other Shopify stores.
         </p>
         {showForm && (
           <Form className={styles.form} method="post">
@@ -48,16 +49,17 @@ export default function App() {
         )}
         <ul className={styles.list}>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Your own offers</strong>. Show up to three offers on your
+            Thank You page, with discount codes and start and end dates.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Traffic swap</strong>. Opt in to show other stores' offers,
+            clearly labeled Sponsored, and earn credits that bring visitors to
+            your store.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Simple dashboard</strong>. See your clicks sent, clicks
+            received and credit balance at a glance.
           </li>
         </ul>
       </div>
