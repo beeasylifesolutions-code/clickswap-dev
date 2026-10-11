@@ -11,20 +11,10 @@ handle = "order-status-offers"
 type = "ui_extension"
 uid = "12d7c418-6403-25b9-b5ec-4b9a7105e7ff0cfcecc4"
 
-# Controls where in Shopify your extension will be injected,
-# and the file that contains your extension’s source code. Learn more:
-# https://shopify.dev/docs/api/customer-account-ui-extensions/latest/targets
-
 [[extensions.targeting]]
 module = "./src/OrderStatusBlock.jsx"
 target = "customer-account.order-status.block.render"
 
 [extensions.capabilities]
-# Gives your extension access to directly query Shopify’s storefront API.
-# https://shopify.dev/docs/apps/build/customer-accounts/capabilities#storefront-api-access
 api_access = true
-
-# Gives your extension access to make external network calls, using the
-# JavaScript `fetch()` API. Learn more:
-# https://shopify.dev/docs/apps/build/customer-accounts/capabilities#network-access
-# network_access = true
+network_access = true

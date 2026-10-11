@@ -1,20 +1,32 @@
-# Learn more about configuring your Customer account UI extension:
-# https://shopify.dev/docs/api/customer-account-ui-extensions/latest#configuration
+# Learn more about configuring your checkout UI extension:
+# https://shopify.dev/docs/api/checkout-ui-extensions/latest/configuration
 
 # The version of APIs your extension will receive. Learn more:
 # https://shopify.dev/docs/api/usage/versioning
 api_version = "2026-07"
 
 [[extensions]]
-name = "order-status-offers"
-handle = "order-status-offers"
+name = "thank-you-offers"
+handle = "thank-you-offers"
 type = "ui_extension"
-uid = "12d7c418-6403-25b9-b5ec-4b9a7105e7ff0cfcecc4"
+uid = "2944402d-8af2-71f1-6107-498d5238826b058c713c"
 
 [[extensions.targeting]]
-module = "./src/OrderStatusBlock.jsx"
-target = "customer-account.order-status.block.render"
+module = "./src/Checkout.jsx"
+target = "purchase.thank-you.block.render"
 
 [extensions.capabilities]
 api_access = true
 network_access = true
+
+[[extensions.metafields]]
+namespace = "$app"
+key = "offers"
+
+[[extensions.metafields]]
+namespace = "$app"
+key = "enabled"
+
+[[extensions.metafields]]
+namespace = "$app"
+key = "plan"
