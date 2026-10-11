@@ -11,26 +11,12 @@ handle = "thank-you-offers"
 type = "ui_extension"
 uid = "2944402d-8af2-71f1-6107-498d5238826b058c713c"
 
-# Controls where in Shopify your extension will be injected,
-# and the file that contains your extension's source code. Learn more:
-# https://shopify.dev/docs/api/checkout-ui-extensions/latest/targets
-
 [[extensions.targeting]]
 module = "./src/Checkout.jsx"
 target = "purchase.thank-you.block.render"
 
-[[extensions.targeting]]
-module = "./src/Checkout.jsx"
-target = "purchase.order-status.block.render"
-
 [extensions.capabilities]
-# Gives your extension access to directly query Shopify's storefront API.
-# https://shopify.dev/docs/apps/build/checkout/capabilities#storefront-api-access
 api_access = true
-
-# Gives your extension access to make external network calls, using the
-# JavaScript `fetch()` API. Learn more:
-# https://shopify.dev/docs/apps/build/checkout/capabilities#network-access
 network_access = true
 
 [[extensions.metafields]]

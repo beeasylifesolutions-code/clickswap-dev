@@ -112,7 +112,7 @@ importers:
         specifier: ^2.3.x
         version: 2.11.3(preact@10.29.8)
       '@shopify/ui-extensions':
-        specifier: 2026.7.x
+        specifier: 2026.7.0
         version: 2026.7.0(@preact/signals@2.11.3(preact@10.29.8))(preact@10.29.8)
       preact:
         specifier: ^10.10.x
