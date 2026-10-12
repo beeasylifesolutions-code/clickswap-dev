@@ -65,8 +65,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const form = await request.formData();
+
+  // Keeps the database kill switch in step with the main switch.
+  const syncKillSwitch = async (on: boolean) => {
+    try {
+      await prisma.shop.upsert({
+        where: { domain: session.shop },
+        update: { killSwitch: !on },
+        create: { domain: session.shop, killSwitch: !on },
+      });
+    } catch (error) {
+      console.error("Could not sync kill switch", error);
+    }
+  };
 
   const shopResponse = await admin.graphql(
     `#graphql
@@ -150,6 +163,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     const problem = await saveMetafields(metafields);
     if (problem) return { ok: false, message: problem };
+    await syncKillSwitch(true);
     return { ok: true, message: "Setup done" };
   }
 
@@ -198,6 +212,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     },
   ]);
   if (problem) return { ok: false, message: problem };
+  await syncKillSwitch(enabled);
   return { ok: true, message: "Settings saved" };
 };
 
