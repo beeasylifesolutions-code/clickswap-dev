@@ -1,6 +1,6 @@
 import prisma from "./db.server";
 
-export const MINIMUM_ORDERS = 1500;
+export const MINIMUM_ORDERS = 50;
 
 // Asks Shopify how many paid, non-test orders the store had in the last 30 days
 // and saves the number on the Shop row.

@@ -16,26 +16,50 @@ export type ServedAd = {
 // Picks up to MAX_SLOTS swap ads for the store with this domain.
 // Used by both the Thank You page and the order status page.
 export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
-  // Only stores with swap on, consent given and enough paid orders
-  // can show other stores' ads
-  const me = await prisma.shop.findUnique({ where: { domain } });
+  const me = await prisma.shop.findUnique({
+    where: { domain },
+    include: { blockedStores: { select: { domain: true } } },
+  });
+
+  // Only stores with swap on, consent given, enough paid orders,
+  // and no kill switch or suspension can show other stores' ads
   if (
     !me ||
     !me.swapEnabled ||
     !me.consentAt ||
+    me.killSwitch ||
+    me.suspended ||
     !meetsMinimum(me.ordersLast30)
   ) {
     return [];
   }
 
-  // Ads come only from OTHER stores that also have swap on
+  const blockedDomains = me.blockedStores.map((block) => block.domain);
+  const blockedCategories = me.blockedCategories;
+
+  // Ads come only from OTHER stores that also have swap on, and never from
+  // stores or categories this store blocked, or stores that blocked this store
   const candidates = await prisma.ad.findMany({
     where: {
       active: true,
+      disabled: false,
+      // Skip ads this store has reported
+      reports: { none: { shopId: me.id } },
       shop: {
         swapEnabled: true,
         consentAt: { not: null },
-        domain: { not: domain },
+        killSwitch: false,
+        suspended: false,
+        domain: { not: domain, notIn: blockedDomains },
+        blockedStores: { none: { domain } },
+        ...(blockedCategories.length > 0
+          ? {
+              OR: [
+                { niche: null },
+                { niche: { notIn: blockedCategories } },
+              ],
+            }
+          : {}),
       },
     },
     include: { shop: { select: { ordersLast30: true } } },
@@ -72,7 +96,9 @@ export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
     if (chosen.length === MAX_SLOTS) break;
   }
 
-  // One single-use token per ad shown
+  // One single-use token per ad shown. The ads shown together on one
+  // page view share a viewId, so a page view can be counted once.
+  const viewId = randomBytes(8).toString("hex");
   const rows = chosen.map((ad) => ({
     ad,
     token: randomBytes(24).toString("hex"),
@@ -83,6 +109,7 @@ export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
       adId: ad.id,
       senderShopId: me.id,
       advertiserShopId: ad.shopId,
+      viewId,
     })),
   });
 

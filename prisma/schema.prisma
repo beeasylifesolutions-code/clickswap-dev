@@ -35,22 +35,36 @@ model Session {
 model Shop {
   id          String    @id @default(cuid())
   domain      String    @unique
+  // 1 = Starter, 2 = Growth, 3 = Scale, 4 = Enterprise
   plan        Int       @default(1)
   swapEnabled Boolean   @default(false)
   consentAt   DateTime?
+  // The store's own category. Other stores can block a whole category.
   niche       String?
   ordersLast30    Int       @default(0)
   ordersCheckedAt DateTime?
+  // Merchant's global kill switch: turns everything off
+  killSwitch  Boolean   @default(false)
+  // Our own switch: we can turn a store off at once
+  suspended       Boolean @default(false)
+  suspendedReason String?
+  // Categories this store never wants to see ads from
+  blockedCategories String[] @default([])
+  // Set once the store has shown its first 5 valid network ads
+  poolEligibleAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   ads            Ad[]
+  slots          Slot[]
+  blockedStores  BlockedStore[]
+  reports        Report[]
   ledger         CreditLedger[]
   clicksSent     Click[]        @relation("ClicksSent")
   clicksReceived Click[]        @relation("ClicksReceived")
 }
 
-// The ad a store wants partner stores to show
+// The ad a store wants partner stores to show (one of its products)
 model Ad {
   id          String   @id @default(cuid())
   shopId      String
@@ -59,12 +73,75 @@ model Ad {
   text        String
   destination String
   code        String?
+  imageUrl    String?
+  priceText   String?
+  productGid  String?
+  // The merchant's own on/off switch
   active      Boolean  @default(true)
+  // Our switch: set by us or by repeated reports
+  disabled       Boolean @default(false)
+  disabledReason String?
   createdAt   DateTime @default(now())
 
-  clicks Click[]
+  clicks  Click[]
+  reports Report[]
 
   @@index([shopId])
+}
+
+// One of the 6 display slots: 3 on each page
+model Slot {
+  id         String   @id @default(cuid())
+  shopId     String
+  shop       Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  // "order_confirmation" or "thank_you"
+  surface    String
+  // 1, 2 or 3
+  position   Int
+  // "self_promo", "swap_first" or "locked_store"
+  mode       String   @default("self_promo")
+  active     Boolean  @default(true)
+  // The store's own product shown in this slot
+  productGid String?
+  title      String?
+  imageUrl   String?
+  priceText  String?
+  productUrl String?
+  // For locked_store mode: the partner store pinned here
+  lockedDomain String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([shopId, surface, position])
+}
+
+// A partner store this store never wants to see
+model BlockedStore {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  domain    String
+  createdAt DateTime @default(now())
+
+  @@unique([shopId, domain])
+}
+
+// A merchant flagging a partner ad
+model Report {
+  id         String    @id @default(cuid())
+  shopId     String
+  shop       Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  adId       String
+  ad         Ad        @relation(fields: [adId], references: [id], onDelete: Cascade)
+  reason     String
+  note       String?
+  // "open", "reviewed", "dismissed" or "actioned"
+  status     String    @default("open")
+  createdAt  DateTime  @default(now())
+  reviewedAt DateTime?
+
+  @@index([adId])
+  @@index([status, createdAt])
 }
 
 // One row per click on a partner ad. The token can only be used once.
@@ -82,10 +159,16 @@ model Click {
   usedAt           DateTime?
   settleAfter      DateTime?
   settledAt        DateTime?
+  // Groups the ads shown together on one page view
+  viewId           String?
+  // Order ID plus hashed session, so one checkout counts one click
+  dedupeKey        String?
 
   @@index([senderShopId, createdAt])
   @@index([advertiserShopId, createdAt])
   @@index([status, settleAfter])
+  @@index([senderShopId, viewId])
+  @@index([dedupeKey])
 }
 
 // A running list of credits earned (+) and spent (-)
