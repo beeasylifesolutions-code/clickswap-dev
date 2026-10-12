@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate, unauthenticated } from "../shopify.server";
-import { pickSwapAds, MAX_SLOTS } from "../swapads.server";
+import { MAX_SLOTS } from "../swapads.server";
 
 type Offer = {
   title: string;
@@ -63,6 +63,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return null;
 };
 
+// The Order Confirmation page shows only the store's own offers.
+// Partner swap ads appear on the Thank You page only.
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { cors, sessionToken } =
     await authenticate.public.customerAccount(request);
@@ -73,6 +75,5 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return cors(Response.json({ ads: [], offers: [] }));
   }
 
-  const ads = await pickSwapAds(domain);
-  return cors(Response.json({ ads, offers }));
+  return cors(Response.json({ ads: [], offers }));
 };
