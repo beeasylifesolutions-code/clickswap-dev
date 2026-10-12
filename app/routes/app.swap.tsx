@@ -10,8 +10,6 @@ import {
   refreshOrderCount,
 } from "../orders.server";
 
-const STARTER_CREDITS = 10;
-
 const clean = (value: FormDataEntryValue | null, max: number) =>
   String(value ?? "").trim().slice(0, max);
 
@@ -110,30 +108,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.shop.update({
-      where: { id: shop.id },
-      data: {
-        swapEnabled: consent && wantsSwap,
-        consentAt: consent ? (shop.consentAt ?? new Date()) : null,
-      },
-    });
-
-    // Starter credits are given once per store, ever
-    if (consent) {
-      const alreadyGiven = await tx.creditLedger.findFirst({
-        where: { shopId: shop.id, reason: "starter_credits" },
-      });
-      if (!alreadyGiven) {
-        await tx.creditLedger.create({
-          data: {
-            shopId: shop.id,
-            delta: STARTER_CREDITS,
-            reason: "starter_credits",
-          },
-        });
-      }
-    }
+  await prisma.shop.update({
+    where: { id: shop.id },
+    data: {
+      swapEnabled: consent && wantsSwap,
+      consentAt: consent ? (shop.consentAt ?? new Date()) : null,
+    },
   });
 
   const existing = await prisma.ad.findFirst({ where: { shopId: shop.id } });
@@ -182,8 +162,9 @@ export default function SwapPage() {
               <s-text>
                 You earn 1 credit when a shopper clicks another store's ad on
                 your Thank you page. You spend 1 credit when a shopper clicks
-                your ad on another store's page. New stores get 10 free credits
-                when they first agree below.
+                your ad on another store's page. Every store starts at zero
+                credits, so your ad starts showing once you have earned your
+                first credit.
               </s-text>
               <s-text>
                 When swap is on, other stores show your ad on their Thank you
