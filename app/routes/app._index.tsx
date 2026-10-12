@@ -4,6 +4,7 @@ import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { setupSlots } from "../products.server";
 
 // Every plan has the same number of slots and own offers
 const MAX_OFFERS = 3;
@@ -164,6 +165,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const problem = await saveMetafields(metafields);
     if (problem) return { ok: false, message: problem };
     await syncKillSwitch(true);
+    const slotResult = await setupSlots(admin, session.shop, shopId);
+    if (!slotResult.ok) return { ok: false, message: slotResult.message };
     return { ok: true, message: "Setup done" };
   }
 
@@ -273,8 +276,9 @@ export default function Index() {
         <s-section heading="Quick setup">
           <s-stack gap="base">
             <s-text>
-              One click turns your offers on and adds a starter offer you can
-              edit. It never changes offers you already wrote.
+              One click turns your offers on, fills your slots with your top 3
+              best sellers, and adds a starter offer you can edit. It never
+              changes slots or offers you already filled in.
             </s-text>
             <setupFetcher.Form method="post">
               <input type="hidden" name="intent" value="setup" />
