@@ -156,6 +156,34 @@ export async function fetchBestSellers(
   return result;
 }
 
+// Turns each Thank You slot product into a network ad (with image and price).
+// An ad that already exists for a product is left alone.
+export async function syncProductAds(shopDbId: string) {
+  const slots = await prisma.slot.findMany({
+    where: { shopId: shopDbId, surface: "thank_you", active: true },
+  });
+  for (const slot of slots) {
+    if (!slot.productGid || !slot.title || !slot.productUrl) continue;
+    if (!slot.productUrl.startsWith("https://")) continue;
+    const existing = await prisma.ad.findFirst({
+      where: { shopId: shopDbId, productGid: slot.productGid },
+    });
+    if (existing) continue;
+    await prisma.ad.create({
+      data: {
+        shopId: shopDbId,
+        title: slot.title,
+        text: "A best seller from this store.",
+        destination: slot.productUrl,
+        imageUrl: slot.imageUrl,
+        priceText: slot.priceText,
+        productGid: slot.productGid,
+        active: true,
+      },
+    });
+  }
+}
+
 // One-click setup for the 6 slots. Order Confirmation slots are your own
 // products. Thank You slots are partner-ads-first with your own product as
 // the fallback. A slot you already filled in is never overwritten.
@@ -204,6 +232,9 @@ export async function setupSlots(
         });
       }
     }
+
+    // The Thank You products also become this store's network ads
+    await syncProductAds(shop.id);
 
     // Save a copy of the slots on the shop so the checkout blocks can read them fast
     await saveSlotsMetafield(admin, shop.id, shopGid);
