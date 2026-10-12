@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate, unauthenticated } from "../shopify.server";
 import { MAX_SLOTS } from "../swapads.server";
+import prisma from "../db.server";
 
 type Offer = {
   title: string;
@@ -57,13 +58,35 @@ async function readOwnOffers(domain: string) {
   }
 }
 
+// Reads the store's own product slots for the Order Confirmation page.
+async function readProductSlots(domain: string) {
+  try {
+    const shop = await prisma.shop.findUnique({ where: { domain } });
+    if (!shop) return [];
+    const slots = await prisma.slot.findMany({
+      where: { shopId: shop.id, surface: "order_confirmation", active: true },
+      orderBy: { position: "asc" },
+    });
+    return slots
+      .filter((slot) => slot.title)
+      .map((slot) => ({
+        title: slot.title,
+        imageUrl: slot.imageUrl,
+        priceText: slot.priceText,
+        url: slot.productUrl,
+      }));
+  } catch (error) {
+    return [];
+  }
+}
+
 // Handles the "preflight" check Shopify sends before the real request
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.public.customerAccount(request);
   return null;
 };
 
-// The Order Confirmation page shows only the store's own offers.
+// The Order Confirmation page shows only the store's own products and offers.
 // Partner swap ads appear on the Thank You page only.
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { cors, sessionToken } =
@@ -72,8 +95,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const { enabled, offers } = await readOwnOffers(domain);
   if (!enabled) {
-    return cors(Response.json({ ads: [], offers: [] }));
+    return cors(Response.json({ ads: [], products: [], offers: [] }));
   }
 
-  return cors(Response.json({ ads: [], offers }));
+  const products = await readProductSlots(domain);
+  return cors(Response.json({ ads: [], products, offers }));
 };

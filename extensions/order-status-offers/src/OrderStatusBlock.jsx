@@ -13,9 +13,9 @@ export default async () => {
   render(<Extension />, document.body);
 };
 
-// Asks your server for the store's own offers.
+// Asks your server for the store's own products and offers.
 // Any problem just means "show nothing".
-async function loadOffers() {
+async function loadContent() {
   try {
     const token = await shopify.sessionToken.get();
     const response = await fetch(`${APP_URL}/api/status-ads`, {
@@ -24,33 +24,53 @@ async function loadOffers() {
     });
     if (!response.ok) return [];
     const data = await response.json();
-    return Array.isArray(data.offers) ? data.offers.slice(0, SLOTS) : [];
+    const products = Array.isArray(data.products) ? data.products : [];
+    const offers = Array.isArray(data.offers) ? data.offers : [];
+    return [
+      ...products.map((product) => ({ ...product, isProduct: true })),
+      ...offers,
+    ].slice(0, SLOTS);
   } catch (error) {
     return [];
   }
 }
 
 function Extension() {
-  const [offers, setOffers] = useState(null);
+  const [items, setItems] = useState(null);
 
   useEffect(() => {
-    loadOffers().then(setOffers);
+    loadContent().then(setItems);
   }, []);
 
-  if (!offers || offers.length === 0) return null;
+  if (!items || items.length === 0) return null;
 
   return (
     <s-stack gap="base">
-      {offers.map((offer, index) => (
-        <s-banner key={index} heading={offer.title}>
-          <s-stack gap="base">
-            {offer.text ? <s-text>{offer.text}</s-text> : null}
-            {offer.code ? (
-              <s-text type="emphasis">Code: {offer.code}</s-text>
-            ) : null}
-          </s-stack>
-        </s-banner>
-      ))}
+      {items.map((item, index) =>
+        item.isProduct ? (
+          <s-box key={index} border="base" borderRadius="base" padding="base">
+            <s-stack gap="small">
+              {item.imageUrl ? (
+                <s-box maxInlineSize="140px">
+                  <s-image src={item.imageUrl} alt={item.title} aspectRatio="1" />
+                </s-box>
+              ) : null}
+              <s-text type="strong">{item.title}</s-text>
+              {item.priceText ? <s-text>{item.priceText}</s-text> : null}
+              {item.url ? <s-link href={item.url}>View product</s-link> : null}
+            </s-stack>
+          </s-box>
+        ) : (
+          <s-banner key={index} heading={item.title}>
+            <s-stack gap="base">
+              {item.text ? <s-text>{item.text}</s-text> : null}
+              {item.code ? (
+                <s-text type="emphasis">Code: {item.code}</s-text>
+              ) : null}
+            </s-stack>
+          </s-banner>
+        ),
+      )}
     </s-stack>
   );
 }
