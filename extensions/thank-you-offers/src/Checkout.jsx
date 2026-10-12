@@ -3,30 +3,21 @@ import '@shopify/ui-extensions/preact';
 import {render} from "preact";
 import {useState, useEffect} from "preact/hooks";
 
-// The address of your app server. It changes each time the dev tunnel restarts.
+// The address of your app server.
 const APP_URL = "https://clickswap-dev.onrender.com";
 
 // Every tier shows the same number of ad slots.
 const SLOTS = 3;
 
 const SAMPLE_OFFERS = [
-  {
-    title: "A thank-you gift for you",
-    text: "Use code THANKYOU10 for 10% off your next order.",
-    code: "",
-  },
+  { title: "A thank-you gift for you", text: "Use code THANKYOU10 for 10% off your next order.", code: "" },
 ];
 
-export default async () => {
-  render(<Extension />, document.body);
-};
+export default async () => { render(<Extension />, document.body); };
 
 function findEntry(key) {
   return shopify.appMetafields.value.find(
-    (item) =>
-      item.target.type === "shop" &&
-      item.metafield.namespace === "$app" &&
-      item.metafield.key === key,
+    (item) => item.target.type === "shop" && item.metafield.namespace === "$app" && item.metafield.key === key
   );
 }
 
@@ -53,13 +44,14 @@ function readOffers() {
   const entry = findEntry("offers");
   if (!entry) return SAMPLE_OFFERS;
   try {
-    const parsed = JSON.parse(entry.metafield.value);
-    if (!Array.isArray(parsed) || parsed.length === 0) return SAMPLE_OFFERS;
+    const parsed = JSON.parse(String(entry.metafield.value));
+    if (!Array.isArray(parsed)) return SAMPLE_OFFERS;
     const today = todayString();
-    return parsed
+    const offers = parsed
       .slice(0, SLOTS)
       .filter((offer) => offer && offer.title)
       .filter((offer) => isActive(offer, today));
+    return offers.length > 0 ? offers : SAMPLE_OFFERS;
   } catch (error) {
     return SAMPLE_OFFERS;
   }
@@ -93,10 +85,7 @@ function Extension() {
 
   // Swap ads go first, then your own offers fill any empty slots.
   const own = readOffers();
-  const items = [
-    ...swapAds.map((ad) => ({ ...ad, sponsored: true })),
-    ...own,
-  ].slice(0, SLOTS);
+  const items = [...swapAds.map((ad) => ({ ...ad, sponsored: true })), ...own].slice(0, SLOTS);
 
   return (
     <s-stack gap="base">
@@ -105,11 +94,12 @@ function Extension() {
           <s-stack gap="base">
             {offer.sponsored ? <s-text>Sponsored</s-text> : null}
             {offer.text ? <s-text>{offer.text}</s-text> : null}
-            {offer.code ? (
-              <s-text type="emphasis">Code: {offer.code}</s-text>
-            ) : null}
+            {offer.code ? (<s-text type="emphasis">Code: {offer.code}</s-text>) : null}
             {offer.sponsored && offer.token ? (
-              <s-link href={`${APP_URL}/click/${offer.token}`}>Visit store</s-link>
+              <s-stack direction="inline" gap="base">
+                <s-link href={`${APP_URL}/click/${offer.token}`}>Visit store</s-link>
+                <s-link href={`${APP_URL}/report/${offer.token}`}>Report</s-link>
+              </s-stack>
             ) : null}
           </s-stack>
         </s-banner>
