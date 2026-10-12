@@ -2,13 +2,21 @@ import prisma from "./db.server";
 
 // Limits that stop any one store from earning too many credits.
 // To change a limit, change the number here. Nothing else needs to change.
-const DAILY_EARN_CAP: Record<number, number> = { 1: 30, 2: 75, 3: 200 };
-const BALANCE_CEILING_FACTOR = 10; // a store can hold at most (daily cap x 10) credits
+// Plans: 1 = Starter, 2 = Growth, 3 = Scale, 4 = Enterprise (placeholder, custom later).
+const DAILY_CLICK_CAP: Record<number, number> = { 1: 1, 2: 3, 3: 10, 4: 50 };
+const BALANCE_CEILING = 2000; // no store can hold more than this many credits
 const PAIR_DAILY_CAP = 10; // paid clicks per day from one store to the same advertiser
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function dailyCapFor(plan: number | null | undefined) {
-  return DAILY_EARN_CAP[plan ?? 1] ?? DAILY_EARN_CAP[1];
+  return DAILY_CLICK_CAP[plan ?? 1] ?? DAILY_CLICK_CAP[1];
+}
+
+// Daily counters reset at 00:00 UTC.
+function startOfUtcDay() {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
 }
 
 // Pays out clicks whose 24-hour waiting period is over.
@@ -48,9 +56,9 @@ export async function settleClicks(limit = 200) {
         select: { plan: true },
       });
       const dailyCap = dailyCapFor(sender?.plan);
-      const since = new Date(Date.now() - DAY_MS);
+      const since = startOfUtcDay();
 
-      // Rule 1: a store can only earn so many credits per day
+      // Rule 1: a store can only send so many paid clicks per day
       const earnedToday = await tx.creditLedger.count({
         where: {
           shopId: click.senderShopId,
@@ -77,7 +85,7 @@ export async function settleClicks(limit = 200) {
         where: { shopId: click.senderShopId },
         _sum: { delta: true },
       });
-      if ((senderBalance._sum.delta ?? 0) >= dailyCap * BALANCE_CEILING_FACTOR) {
+      if ((senderBalance._sum.delta ?? 0) >= BALANCE_CEILING) {
         return markCapped();
       }
 

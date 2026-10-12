@@ -5,6 +5,23 @@ import { meetsMinimum } from "./orders.server";
 // Every tier gets the same number of ad slots
 export const MAX_SLOTS = 3;
 
+// Plans: 1 = Starter, 2 = Growth, 3 = Scale, 4 = Enterprise (placeholder, custom later).
+// One page view that shows partner ads counts as one view.
+const DAILY_VIEW_CAP: Record<number, number> = { 1: 15, 2: 60, 3: 200, 4: 1000 };
+const DAILY_CLICK_CAP: Record<number, number> = { 1: 1, 2: 3, 3: 10, 4: 50 };
+
+// A new store's ads join the pool only after its page has shown this many
+// partner-ad page views.
+const EARN_FIRST_VIEWS = 5;
+
+// Daily counters reset at 00:00 UTC.
+function startOfUtcDay() {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+}
+
 export type ServedAd = {
   id: string;
   title: string;
@@ -14,7 +31,7 @@ export type ServedAd = {
 };
 
 // Picks up to MAX_SLOTS swap ads for the store with this domain.
-// Used by both the Thank You page and the order status page.
+// Returns an empty list when the store should show its own products instead.
 export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
   const me = await prisma.shop.findUnique({
     where: { domain },
@@ -34,6 +51,33 @@ export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
     return [];
   }
 
+  // Daily limits: whichever is hit first switches this store to its own products
+  const plan = me.plan ?? 1;
+  const viewCap = DAILY_VIEW_CAP[plan] ?? DAILY_VIEW_CAP[1];
+  const clickCap = DAILY_CLICK_CAP[plan] ?? DAILY_CLICK_CAP[1];
+  const since = startOfUtcDay();
+
+  const viewsToday = (
+    await prisma.click.groupBy({
+      by: ["viewId"],
+      where: {
+        senderShopId: me.id,
+        viewId: { not: null },
+        createdAt: { gte: since },
+      },
+    })
+  ).length;
+  if (viewsToday >= viewCap) return [];
+
+  const clicksToday = await prisma.click.count({
+    where: {
+      senderShopId: me.id,
+      status: { in: ["clicked", "settled"] },
+      createdAt: { gte: since },
+    },
+  });
+  if (clicksToday >= clickCap) return [];
+
   const blockedDomains = me.blockedStores.map((block) => block.domain);
   const blockedCategories = me.blockedCategories;
 
@@ -50,6 +94,8 @@ export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
         consentAt: { not: null },
         killSwitch: false,
         suspended: false,
+        // Earn-first rule: the advertiser has to have shown partner ads first
+        poolEligibleAt: { not: null },
         domain: { not: domain, notIn: blockedDomains },
         blockedStores: { none: { domain } },
         ...(blockedCategories.length > 0
@@ -112,6 +158,23 @@ export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
       viewId,
     })),
   });
+
+  // Earn-first rule: after enough partner-ad page views, this store's own
+  // ads join the pool for everyone else.
+  if (!me.poolEligibleAt) {
+    const totalViews = (
+      await prisma.click.groupBy({
+        by: ["viewId"],
+        where: { senderShopId: me.id, viewId: { not: null } },
+      })
+    ).length;
+    if (totalViews >= EARN_FIRST_VIEWS) {
+      await prisma.shop.update({
+        where: { id: me.id },
+        data: { poolEligibleAt: new Date() },
+      });
+    }
+  }
 
   return rows.map(({ ad, token }) => ({
     id: ad.id,
