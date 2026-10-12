@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { pickSwapAds } from "../swapads.server";
+import prisma from "../db.server";
 
 // Handles the "preflight" check Shopify sends before the real request
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -11,6 +12,62 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { cors, sessionToken } = await authenticate.public.checkout(request);
   const domain = String(sessionToken.dest).replace(/^https?:\/\//, "");
+
+  // Partner ads (already limited by caps, blocklists, kill switch and so on)
   const ads = await pickSwapAds(domain);
-  return cors(Response.json({ ads }));
+
+  // Image and price for each partner ad
+  const extra =
+    ads.length > 0
+      ? await prisma.ad.findMany({
+          where: { id: { in: ads.map((ad) => ad.id) } },
+          select: { id: true, imageUrl: true, priceText: true },
+        })
+      : [];
+  const extraById = new Map(extra.map((row) => [row.id, row]));
+  const partners = ads.map((ad) => ({
+    kind: "partner",
+    title: ad.title,
+    text: ad.text,
+    code: ad.code,
+    token: ad.token,
+    imageUrl: extraById.get(ad.id)?.imageUrl ?? null,
+    priceText: extraById.get(ad.id)?.priceText ?? null,
+  }));
+
+  // This store's own Thank You slots
+  const shop = await prisma.shop.findUnique({ where: { domain } });
+  const slots = shop
+    ? await prisma.slot.findMany({
+        where: { shopId: shop.id, surface: "thank_you", active: true },
+        orderBy: { position: "asc" },
+      })
+    : [];
+
+  // Each slot shows a partner ad when it is set to swap and one is available,
+  // and otherwise the store's own product, so a slot is never empty.
+  const items: any[] = [];
+  if (slots.length === 0) {
+    items.push(...partners.slice(0, 3));
+  } else {
+    let next = 0;
+    for (const slot of slots) {
+      if (slot.mode !== "self_promo" && next < partners.length) {
+        items.push(partners[next]);
+        next += 1;
+        continue;
+      }
+      if (slot.title) {
+        items.push({
+          kind: "own",
+          title: slot.title,
+          imageUrl: slot.imageUrl,
+          priceText: slot.priceText,
+          url: slot.productUrl,
+        });
+      }
+    }
+  }
+
+  return cors(Response.json({ ads, items }));
 };

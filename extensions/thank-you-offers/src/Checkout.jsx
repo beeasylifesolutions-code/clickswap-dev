@@ -6,7 +6,7 @@ import {useState, useEffect} from "preact/hooks";
 // The address of your app server.
 const APP_URL = "https://clickswap-dev.onrender.com";
 
-// Every tier shows the same number of ad slots.
+// Every tier shows the same number of slots.
 const SLOTS = 3;
 
 const SAMPLE_OFFERS = [
@@ -57,52 +57,84 @@ function readOffers() {
   }
 }
 
-// Asks your server for swap ads. Any problem just means "no swap ads".
-async function loadSwapAds() {
+// Asks your server for the 3 slots (partner products and your own products).
+// Any problem returns null, and the block falls back to your text offers.
+async function loadItems() {
   try {
     const token = await shopify.sessionToken.get();
     const response = await fetch(`${APP_URL}/api/ad`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!response.ok) return [];
+    if (!response.ok) return null;
     const data = await response.json();
-    return data && Array.isArray(data.ads) ? data.ads.slice(0, SLOTS) : [];
+    return data && Array.isArray(data.items) ? data.items.slice(0, SLOTS) : null;
   } catch (error) {
-    return [];
+    return null;
   }
 }
 
+function Card({ item }) {
+  const partner = item.kind === "partner";
+  return (
+    <s-box border="base" borderRadius="base" padding="base">
+      <s-stack gap="small">
+        {partner ? <s-text>Sponsored</s-text> : null}
+        {item.imageUrl ? (
+          <s-box maxInlineSize="140px">
+            <s-image src={item.imageUrl} alt={item.title} aspectRatio="1" />
+          </s-box>
+        ) : null}
+        <s-text type="strong">{item.title}</s-text>
+        {item.priceText ? <s-text>{item.priceText}</s-text> : null}
+        {item.text ? <s-text>{item.text}</s-text> : null}
+        {item.code ? (<s-text type="emphasis">Code: {item.code}</s-text>) : null}
+        {partner && item.token ? (
+          <s-stack direction="inline" gap="base">
+            <s-link href={`${APP_URL}/click/${item.token}`}>Visit store</s-link>
+            <s-link href={`${APP_URL}/report/${item.token}`}>Report</s-link>
+          </s-stack>
+        ) : null}
+        {!partner && item.url ? (
+          <s-link href={item.url}>View product</s-link>
+        ) : null}
+      </s-stack>
+    </s-box>
+  );
+}
+
 function Extension() {
-  const [swapAds, setSwapAds] = useState([]);
+  const [items, setItems] = useState(undefined);
 
   useEffect(() => {
     if (!readEnabled()) return;
-    loadSwapAds().then(setSwapAds);
+    loadItems().then(setItems);
   }, []);
 
   if (!readEnabled()) return null;
+  // Wait for the server so the slots do not jump around
+  if (items === undefined) return null;
 
-  // Swap ads go first, then your own offers fill any empty slots.
-  const own = readOffers();
-  const items = [...swapAds.map((ad) => ({ ...ad, sponsored: true })), ...own].slice(0, SLOTS);
+  // If the server has nothing, show the store's own text offers
+  if (!items || items.length === 0) {
+    return (
+      <s-stack gap="base">
+        {readOffers().map((offer, index) => (
+          <s-banner key={index} heading={offer.title}>
+            <s-stack gap="base">
+              {offer.text ? <s-text>{offer.text}</s-text> : null}
+              {offer.code ? (<s-text type="emphasis">Code: {offer.code}</s-text>) : null}
+            </s-stack>
+          </s-banner>
+        ))}
+      </s-stack>
+    );
+  }
 
   return (
     <s-stack gap="base">
-      {items.map((offer, index) => (
-        <s-banner key={index} heading={offer.title}>
-          <s-stack gap="base">
-            {offer.sponsored ? <s-text>Sponsored</s-text> : null}
-            {offer.text ? <s-text>{offer.text}</s-text> : null}
-            {offer.code ? (<s-text type="emphasis">Code: {offer.code}</s-text>) : null}
-            {offer.sponsored && offer.token ? (
-              <s-stack direction="inline" gap="base">
-                <s-link href={`${APP_URL}/click/${offer.token}`}>Visit store</s-link>
-                <s-link href={`${APP_URL}/report/${offer.token}`}>Report</s-link>
-              </s-stack>
-            ) : null}
-          </s-stack>
-        </s-banner>
+      {items.map((item, index) => (
+        <Card key={index} item={item} />
       ))}
     </s-stack>
   );
