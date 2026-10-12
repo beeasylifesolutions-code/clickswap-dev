@@ -3,30 +3,19 @@ import { useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
-const HOUR = 60 * 60 * 1000;
+const DAY = 24 * 60 * 60 * 1000;
 
-async function periodStats(shopId: string, since: Date) {
-  const [shownOnMyPage, myAdShown, clicksSent, clicksReceived] =
-    await Promise.all([
-      prisma.click.count({
-        where: { senderShopId: shopId, createdAt: { gte: since } },
-      }),
-      prisma.click.count({
-        where: { advertiserShopId: shopId, createdAt: { gte: since } },
-      }),
-      prisma.click.count({
-        where: { senderShopId: shopId, usedAt: { gte: since } },
-      }),
-      prisma.click.count({
-        where: { advertiserShopId: shopId, usedAt: { gte: since } },
-      }),
-    ]);
-  const clickRate =
-    shownOnMyPage > 0
-      ? `${((clicksSent / shownOnMyPage) * 100).toFixed(1)}%`
-      : "-";
-  return { shownOnMyPage, myAdShown, clicksSent, clicksReceived, clickRate };
-}
+// Same numbers as the ad picker (plans: 1 Starter, 2 Growth, 3 Scale, 4 Enterprise)
+const DAILY_VIEW_CAP: Record<number, number> = { 1: 15, 2: 60, 3: 200, 4: 1000 };
+const DAILY_CLICK_CAP: Record<number, number> = { 1: 1, 2: 3, 3: 10, 4: 50 };
+const PLAN_NAMES: Record<number, string> = {
+  1: "Starter",
+  2: "Growth",
+  3: "Scale",
+  4: "Enterprise",
+};
+
+const dayKey = (date: Date) => date.toISOString().slice(0, 10);
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -36,8 +25,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     create: { domain: session.shop },
   });
 
+  const url = new URL(request.url);
+  const requested = Number(url.searchParams.get("days"));
+  const days = [7, 30, 90].includes(requested) ? requested : 30;
   const now = Date.now();
-  const [balance, pendingEarned, pendingSpent, day, week, month, recent] =
+  const since = new Date(now - days * DAY);
+
+  const [balance, pendingEarned, pendingSpent, clicks, recent] =
     await Promise.all([
       prisma.creditLedger.aggregate({
         where: { shopId: shop.id },
@@ -49,9 +43,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       prisma.click.count({
         where: { advertiserShopId: shop.id, status: "clicked" },
       }),
-      periodStats(shop.id, new Date(now - 24 * HOUR)),
-      periodStats(shop.id, new Date(now - 7 * 24 * HOUR)),
-      periodStats(shop.id, new Date(now - 30 * 24 * HOUR)),
+      prisma.click.findMany({
+        where: {
+          createdAt: { gte: since },
+          OR: [{ senderShopId: shop.id }, { advertiserShopId: shop.id }],
+        },
+        select: {
+          createdAt: true,
+          usedAt: true,
+          viewId: true,
+          senderShopId: true,
+          advertiserShopId: true,
+        },
+        take: 100000,
+      }),
       prisma.click.findMany({
         where: {
           usedAt: { not: null },
@@ -62,19 +67,72 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }),
     ]);
 
+  // Every day in the period, oldest first
+  const labels: string[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    labels.push(dayKey(new Date(now - i * DAY)));
+  }
+  const viewSets = new Map<string, Set<string>>();
+  const sent = new Map<string, number>();
+  const received = new Map<string, number>();
+  let shownOnOthers = 0;
+
+  for (const click of clicks) {
+    if (click.senderShopId === shop.id) {
+      if (click.viewId) {
+        const key = dayKey(click.createdAt);
+        if (!viewSets.has(key)) viewSets.set(key, new Set());
+        viewSets.get(key)!.add(click.viewId);
+      }
+      if (click.usedAt) {
+        const key = dayKey(click.usedAt);
+        sent.set(key, (sent.get(key) ?? 0) + 1);
+      }
+    }
+    if (click.advertiserShopId === shop.id) {
+      shownOnOthers += 1;
+      if (click.usedAt) {
+        const key = dayKey(click.usedAt);
+        received.set(key, (received.get(key) ?? 0) + 1);
+      }
+    }
+  }
+
+  const viewsSeries = labels.map((label) => viewSets.get(label)?.size ?? 0);
+  const sentSeries = labels.map((label) => sent.get(label) ?? 0);
+  const receivedSeries = labels.map((label) => received.get(label) ?? 0);
+  const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+  const totalViews = sum(viewsSeries);
+  const totalSent = sum(sentSeries);
+  const totalReceived = sum(receivedSeries);
+
+  const today = dayKey(new Date(now));
+  const plan = shop.plan ?? 1;
+
   const adIds = [...new Set(recent.map((click) => click.adId))];
   const ads = await prisma.ad.findMany({ where: { id: { in: adIds } } });
   const titles = new Map(ads.map((ad) => [ad.id, ad.title]));
 
   return {
+    days,
     balance: balance._sum.delta ?? 0,
     pendingEarned,
     pendingSpent,
-    periods: [
-      { label: "Last 24 hours", ...day },
-      { label: "Last 7 days", ...week },
-      { label: "Last 30 days", ...month },
-    ],
+    labels,
+    viewsSeries,
+    sentSeries,
+    receivedSeries,
+    totalViews,
+    totalSent,
+    totalReceived,
+    shownOnOthers,
+    clickRate:
+      totalViews > 0 ? `${((totalSent / totalViews) * 100).toFixed(1)}%` : "-",
+    planName: PLAN_NAMES[plan] ?? "Starter",
+    viewsToday: viewSets.get(today)?.size ?? 0,
+    clicksToday: sent.get(today) ?? 0,
+    viewCap: DAILY_VIEW_CAP[plan] ?? DAILY_VIEW_CAP[1],
+    clickCap: DAILY_CLICK_CAP[plan] ?? DAILY_CLICK_CAP[1],
     recent: recent.map((click) => ({
       id: click.id,
       direction: click.senderShopId === shop.id ? "Sent" : "Received",
@@ -87,37 +145,149 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
+function BarChart({
+  values,
+  labels,
+  title,
+}: {
+  values: number[];
+  labels: string[];
+  title: string;
+}) {
+  const max = Math.max(1, ...values);
+  const width = 600;
+  const height = 120;
+  const step = width / Math.max(1, values.length);
+  const barWidth = Math.max(1, step - 2);
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height + 18}`}
+      width="100%"
+      role="img"
+      aria-label={title}
+    >
+      <line
+        x1="0"
+        y1={height}
+        x2={width}
+        y2={height}
+        stroke="currentColor"
+        opacity="0.25"
+      />
+      {values.map((value, index) => {
+        const barHeight = (value / max) * height;
+        return (
+          <rect
+            key={index}
+            x={index * step}
+            y={height - barHeight}
+            width={barWidth}
+            height={barHeight}
+            fill="currentColor"
+            opacity="0.7"
+          >
+            <title>{`${labels[index]}: ${value}`}</title>
+          </rect>
+        );
+      })}
+      <text x="0" y={height + 14} fontSize="11" fill="currentColor">
+        {labels[0]}
+      </text>
+      <text
+        x={width}
+        y={height + 14}
+        fontSize="11"
+        fill="currentColor"
+        textAnchor="end"
+      >
+        {labels[labels.length - 1]}
+      </text>
+    </svg>
+  );
+}
+
+function Tile({ label, value }: { label: string; value: string | number }) {
+  return (
+    <s-box border="base" borderRadius="base" padding="base">
+      <s-stack gap="small">
+        <s-text>{label}</s-text>
+        <s-heading>{String(value)}</s-heading>
+      </s-stack>
+    </s-box>
+  );
+}
+
 export default function Dashboard() {
   const data = useLoaderData<typeof loader>();
 
   return (
     <s-page heading="Dashboard">
       <s-stack direction="block" gap="base">
-        <s-section heading="Credits">
+        <s-section heading="Time period">
+          <s-stack direction="inline" gap="base">
+            {[7, 30, 90].map((option) => (
+              <s-link key={option} href={`/app/dashboard?days=${option}`}>
+                {option === data.days
+                  ? `Last ${option} days (showing)`
+                  : `Last ${option} days`}
+              </s-link>
+            ))}
+          </s-stack>
+        </s-section>
+
+        <s-section heading="Overview">
+          <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+            <Tile label="Credit balance" value={`${data.balance} credits`} />
+            <Tile label="Clicks you sent" value={data.totalSent} />
+            <Tile label="Clicks you received" value={data.totalReceived} />
+            <Tile label="Page views with partner ads" value={data.totalViews} />
+            <Tile label="Click rate on your page" value={data.clickRate} />
+            <Tile label="Your ads shown on other stores" value={data.shownOnOthers} />
+          </s-grid>
+          <s-text>
+            Waiting in the 24-hour hold: +{data.pendingEarned} earned, -
+            {data.pendingSpent} to be spent.
+          </s-text>
+        </s-section>
+
+        <s-section heading={`Today's limits (${data.planName} plan)`}>
           <s-stack direction="block" gap="small">
-            <s-text type="strong">Balance: {data.balance} credits</s-text>
             <s-text>
-              Waiting in the 24-hour hold: +{data.pendingEarned} earned, -
-              {data.pendingSpent} to be spent
+              Page views with partner ads: {data.viewsToday} of {data.viewCap}
+            </s-text>
+            <s-text>
+              Clicks sent: {data.clicksToday} of {data.clickCap}
+            </s-text>
+            <s-text>
+              When either limit is reached, your Thank You page shows your own
+              products until the counters reset at midnight UTC.
             </s-text>
           </s-stack>
         </s-section>
 
-        {data.periods.map((period) => (
-          <s-section key={period.label} heading={period.label}>
-            <s-stack direction="block" gap="small">
-              <s-text>
-                Ads shown on your Thank you page: {period.shownOnMyPage}
-              </s-text>
-              <s-text>Clicks you sent to other stores: {period.clicksSent}</s-text>
-              <s-text>Click rate on your page: {period.clickRate}</s-text>
-              <s-text>Your ad shown on other stores: {period.myAdShown}</s-text>
-              <s-text>
-                Clicks you received from other stores: {period.clicksReceived}
-              </s-text>
-            </s-stack>
-          </s-section>
-        ))}
+        <s-section heading="Page views with partner ads, per day">
+          <BarChart
+            values={data.viewsSeries}
+            labels={data.labels}
+            title="Page views per day"
+          />
+        </s-section>
+
+        <s-section heading="Clicks you sent, per day">
+          <BarChart
+            values={data.sentSeries}
+            labels={data.labels}
+            title="Clicks sent per day"
+          />
+        </s-section>
+
+        <s-section heading="Clicks you received, per day">
+          <BarChart
+            values={data.receivedSeries}
+            labels={data.labels}
+            title="Clicks received per day"
+          />
+        </s-section>
 
         <s-section heading="Recent clicks">
           <s-stack direction="block" gap="small">
