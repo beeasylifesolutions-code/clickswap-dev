@@ -10,9 +10,6 @@ import {
   refreshOrderCount,
 } from "../orders.server";
 
-const clean = (value: FormDataEntryValue | null, max: number) =>
-  String(value ?? "").trim().slice(0, max);
-
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = await prisma.shop.upsert({
@@ -20,7 +17,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     update: {},
     create: { domain: session.shop },
   });
-  const ad = await prisma.ad.findFirst({ where: { shopId: shop.id } });
+  const ads = await prisma.ad.findMany({
+    where: { shopId: shop.id },
+    orderBy: { createdAt: "asc" },
+  });
   const balance = await prisma.creditLedger.aggregate({
     where: { shopId: shop.id },
     _sum: { delta: true },
@@ -40,16 +40,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   return {
-    title: ad?.title ?? "",
-    text: ad?.text ?? "",
-    destination: ad?.destination ?? "",
-    code: ad?.code ?? "",
     swapEnabled: shop.swapEnabled,
     consent: shop.consentAt !== null,
     balance: balance._sum.delta ?? 0,
     orders,
     minimum: MINIMUM_ORDERS,
     eligible: meetsMinimum(orders),
+    ads: ads.map((ad) => ({
+      id: ad.id,
+      title: ad.title,
+      imageUrl: ad.imageUrl,
+      priceText: ad.priceText,
+      isProduct: ad.productGid !== null,
+      active: ad.active,
+      disabled: ad.disabled,
+      disabledReason: ad.disabledReason,
+    })),
   };
 };
 
@@ -57,37 +63,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const form = await request.formData();
 
-  const title = clean(form.get("title"), 60);
-  const text = clean(form.get("text"), 140);
-  const destination = clean(form.get("destination"), 300);
-  const code = clean(form.get("code"), 30);
-  const wantsSwap = form.get("swapEnabled") !== null;
-  const consent = form.get("consent") !== null;
-
-  if (!title || !text || !destination) {
-    return { ok: false, error: "Please fill in the title, message and link." };
-  }
-  let url: URL;
-  try {
-    url = new URL(destination);
-  } catch (error) {
-    return { ok: false, error: "The link must be a full web address." };
-  }
-  if (url.protocol !== "https:") {
-    return { ok: false, error: "The link must start with https://" };
-  }
-  if (wantsSwap && !consent) {
-    return {
-      ok: false,
-      error: "Please tick the consent box before turning swap on.",
-    };
-  }
-
   const shop = await prisma.shop.upsert({
     where: { domain: session.shop },
     update: {},
     create: { domain: session.shop },
   });
+
+  // Turns off an old hand-written text ad (history is kept)
+  if (form.get("intent") === "turnOffAd") {
+    const adId = String(form.get("adId") || "");
+    await prisma.ad.updateMany({
+      where: { id: adId, shopId: shop.id },
+      data: { active: false },
+    });
+    return { ok: true, error: "", message: "Ad turned off" };
+  }
+
+  const wantsSwap = form.get("swapEnabled") !== null;
+  const consent = form.get("consent") !== null;
+
+  if (wantsSwap && !consent) {
+    return {
+      ok: false,
+      error: "Please tick the consent box before turning swap on.",
+      message: "",
+    };
+  }
 
   if (wantsSwap) {
     let orders = 0;
@@ -98,12 +99,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return {
         ok: false,
         error: "We could not check your order count. Please try again.",
+        message: "",
       };
     }
     if (!meetsMinimum(orders)) {
       return {
         ok: false,
         error: `Swap needs ${MINIMUM_ORDERS} paid orders in the last 30 days. Your store has ${orders}.`,
+        message: "",
       };
     }
   }
@@ -115,115 +118,134 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       consentAt: consent ? (shop.consentAt ?? new Date()) : null,
     },
   });
-
-  const existing = await prisma.ad.findFirst({ where: { shopId: shop.id } });
-  const data = { title, text, destination, code: code || null };
-  if (existing) {
-    await prisma.ad.update({ where: { id: existing.id }, data });
-  } else {
-    await prisma.ad.create({ data: { ...data, shopId: shop.id } });
-  }
-  return { ok: true, error: "" };
+  return { ok: true, error: "", message: "Swap settings saved" };
 };
 
 export default function SwapPage() {
   const saved = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const adFetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
 
-  const [title, setTitle] = useState(saved.title);
-  const [text, setText] = useState(saved.text);
-  const [destination, setDestination] = useState(saved.destination);
-  const [code, setCode] = useState(saved.code);
   const [swapEnabled, setSwapEnabled] = useState(saved.swapEnabled);
   const [consent, setConsent] = useState(saved.consent);
 
   useEffect(() => {
-    if (fetcher.data?.ok) shopify.toast.show("Swap settings saved");
+    if (fetcher.data?.ok) shopify.toast.show(fetcher.data.message);
   }, [fetcher.data, shopify]);
+  useEffect(() => {
+    if (adFetcher.data?.ok) shopify.toast.show(adFetcher.data.message);
+  }, [adFetcher.data, shopify]);
 
-  const valueOf = (event: any) => String(event.currentTarget?.value ?? "");
   const checkedOf = (event: any) => Boolean(event.currentTarget?.checked);
 
   return (
     <s-page heading="Swap ads">
-      <fetcher.Form method="post">
-        <s-stack direction="block" gap="base">
-          <s-section heading="Swap">
-            <s-stack direction="block" gap="base">
-              <s-text type="strong">
-                Your credit balance: {saved.balance}
-              </s-text>
-              <s-banner tone={saved.eligible ? "success" : "warning"}>
-                {saved.eligible
-                  ? `Your store has ${saved.orders} paid orders in the last 30 days. Swap is available.`
-                  : `Swap needs ${saved.minimum} paid orders in the last 30 days. Your store has ${saved.orders}. You can still use your own offers.`}
-              </s-banner>
-              <s-text>
-                You earn 1 credit when a shopper clicks another store's ad on
-                your Thank you page. You spend 1 credit when a shopper clicks
-                your ad on another store's page. Every store starts at zero
-                credits, so your ad starts showing once you have earned your
-                first credit.
-              </s-text>
-              <s-text>
-                When swap is on, other stores show your ad on their Thank you
-                page, and your Thank you page can show ads from other stores.
-                If swap is off, your Thank you page only shows your own offers.
-              </s-text>
-              <s-switch
-                label="Turn swap on"
-                name="swapEnabled"
-                checked={swapEnabled}
-                onChange={(event: any) => setSwapEnabled(checkedOf(event))}
-              />
-              <s-checkbox
-                label="I agree that ads from other stores, marked Sponsored, may be shown on my Thank you page, and that my ad may be shown on theirs."
-                name="consent"
-                checked={consent}
-                onChange={(event: any) => setConsent(checkedOf(event))}
-              />
-            </s-stack>
-          </s-section>
+      <s-stack direction="block" gap="base">
+        <fetcher.Form method="post">
+          <s-stack direction="block" gap="base">
+            <s-section heading="Swap">
+              <s-stack direction="block" gap="base">
+                <s-text type="strong">
+                  Your credit balance: {saved.balance}
+                </s-text>
+                <s-banner tone={saved.eligible ? "success" : "warning"}>
+                  {saved.eligible
+                    ? `Your store has ${saved.orders} paid orders in the last 30 days. Swap is available.`
+                    : `Swap needs ${saved.minimum} paid orders in the last 30 days. Your store has ${saved.orders}. You can still use your own products.`}
+                </s-banner>
+                <s-text>
+                  You earn 1 credit when a shopper clicks another store's
+                  product on your Thank you page. You spend 1 credit when a
+                  shopper clicks your product on another store's page. Every
+                  store starts at zero credits, so your ads start showing once
+                  you have earned your first credit.
+                </s-text>
+                <s-text>
+                  When swap is on, other stores can show your products on their
+                  Thank you page, and your Thank you page can show products
+                  from other stores. If swap is off, your Thank you page only
+                  shows your own products.
+                </s-text>
+                <s-switch
+                  label="Turn swap on"
+                  name="swapEnabled"
+                  checked={swapEnabled}
+                  onChange={(event: any) => setSwapEnabled(checkedOf(event))}
+                />
+                <s-checkbox
+                  label="I agree that products from other stores, marked Sponsored, may be shown on my Thank you page, and that my products may be shown on theirs."
+                  name="consent"
+                  checked={consent}
+                  onChange={(event: any) => setConsent(checkedOf(event))}
+                />
+                {fetcher.data && !fetcher.data.ok ? (
+                  <s-banner tone="critical">{fetcher.data.error}</s-banner>
+                ) : null}
+                <s-button type="submit" variant="primary">
+                  Save swap settings
+                </s-button>
+              </s-stack>
+            </s-section>
+          </s-stack>
+        </fetcher.Form>
 
-          <s-section heading="Your swap ad">
-            <s-stack direction="block" gap="base">
+        <s-section heading="Your ads on other stores">
+          <s-stack direction="block" gap="base">
+            <s-text>
+              These are the products other stores can show. They come from the
+              products in your Thank You slots. To change them, go to the Slots
+              page.
+            </s-text>
+            <s-link href="/app/slots">Go to Slots</s-link>
+            {saved.ads.length === 0 ? (
               <s-text>
-                This is the ad other stores will show on their Thank you page.
+                No ads yet. Click "Set up for me" on the Home page, or choose
+                products on the Slots page.
               </s-text>
-              <s-text-field
-                label="Title"
-                name="title"
-                value={title}
-                onInput={(event: any) => setTitle(valueOf(event))}
-              />
-              <s-text-field
-                label="Message"
-                name="text"
-                value={text}
-                onInput={(event: any) => setText(valueOf(event))}
-              />
-              <s-text-field
-                label="Link (where the click goes)"
-                name="destination"
-                value={destination}
-                onInput={(event: any) => setDestination(valueOf(event))}
-              />
-              <s-text-field
-                label="Discount code (optional)"
-                name="code"
-                value={code}
-                onInput={(event: any) => setCode(valueOf(event))}
-              />
-            </s-stack>
-          </s-section>
-
-          {fetcher.data && !fetcher.data.ok ? (
-            <s-banner tone="critical">{fetcher.data.error}</s-banner>
-          ) : null}
-          <s-button type="submit">Save swap settings</s-button>
-        </s-stack>
-      </fetcher.Form>
+            ) : (
+              saved.ads.map((ad) => (
+                <s-box
+                  key={ad.id}
+                  border="base"
+                  borderRadius="base"
+                  padding="base"
+                >
+                  <s-stack direction="inline" gap="base">
+                    {ad.imageUrl ? (
+                      <s-thumbnail
+                        src={ad.imageUrl}
+                        alt={ad.title}
+                        size="small"
+                      />
+                    ) : null}
+                    <s-stack direction="block" gap="small">
+                      <s-text type="strong">{ad.title}</s-text>
+                      {ad.priceText ? <s-text>{ad.priceText}</s-text> : null}
+                      <s-text>
+                        {ad.disabled
+                          ? `Switched off by PostSwap${ad.disabledReason ? `: ${ad.disabledReason}` : ""}`
+                          : ad.active
+                            ? "Live"
+                            : "Off"}
+                      </s-text>
+                      {!ad.isProduct && ad.active ? (
+                        <adFetcher.Form method="post">
+                          <input type="hidden" name="intent" value="turnOffAd" />
+                          <input type="hidden" name="adId" value={ad.id} />
+                          <s-button type="submit" variant="tertiary">
+                            Turn off this old text ad
+                          </s-button>
+                        </adFetcher.Form>
+                      ) : null}
+                    </s-stack>
+                  </s-stack>
+                </s-box>
+              ))
+            )}
+          </s-stack>
+        </s-section>
+      </s-stack>
     </s-page>
   );
 }
