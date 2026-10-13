@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import prisma from "./db.server";
 import { meetsMinimum } from "./orders.server";
 
@@ -32,7 +32,12 @@ export type ServedAd = {
 
 // Picks up to MAX_SLOTS swap ads for the store with this domain.
 // Returns an empty list when the store should show its own products instead.
-export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
+// orderId: one order counts as one view, so reloading the same order's page
+// shows the same ads and is not counted again.
+export async function pickSwapAds(
+  domain: string,
+  orderId?: string | null,
+): Promise<ServedAd[]> {
   const me = await prisma.shop.findUnique({
     where: { domain },
     include: { blockedStores: { select: { domain: true } } },
@@ -49,6 +54,26 @@ export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
     !meetsMinimum(me.ordersLast30)
   ) {
     return [];
+  }
+
+  // One view per order: a reload of the same order's page shows the same ads
+  const dedupeKey = orderId
+    ? createHash("sha256").update(`${me.id}:${orderId}`).digest("hex")
+    : null;
+  if (dedupeKey) {
+    const already = await prisma.click.findMany({
+      where: { senderShopId: me.id, dedupeKey },
+      include: { ad: true },
+    });
+    if (already.length > 0) {
+      return already.map((click) => ({
+        id: click.ad.id,
+        title: click.ad.title,
+        text: click.ad.text,
+        code: click.ad.code,
+        token: click.token,
+      }));
+    }
   }
 
   // Daily limits: whichever is hit first switches this store to its own products
@@ -156,6 +181,7 @@ export async function pickSwapAds(domain: string): Promise<ServedAd[]> {
       senderShopId: me.id,
       advertiserShopId: ad.shopId,
       viewId,
+      dedupeKey,
     })),
   });
 
