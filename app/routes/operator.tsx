@@ -5,6 +5,11 @@ import prisma from "../db.server";
 
 const COOKIE = "ps_operator";
 
+// A store is flagged when, in the last hour, it has this many clicks
+// or this many ad-view rows (3 rows = about 1 page view)
+const SPIKE_CLICKS = 15;
+const SPIKE_VIEW_ROWS = 300;
+
 export const meta = () => [
   { title: "PostSwap operator" },
   { name: "robots", content: "noindex" },
@@ -39,7 +44,14 @@ function isAuthed(request: Request) {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const configured = expectedToken() !== null;
   if (!isAuthed(request)) {
-    return { authed: false, configured, reports: [], shops: [], disabledAds: [] };
+    return {
+      authed: false,
+      configured,
+      reports: [],
+      shops: [],
+      disabledAds: [],
+      spikes: [],
+    };
   }
 
   const reports = await prisma.report.findMany({
@@ -57,6 +69,45 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     include: { shop: true },
     take: 100,
   });
+
+  // Spike check: busy senders in the last hour
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  const clickGroups = await prisma.click.groupBy({
+    by: ["senderShopId"],
+    where: {
+      createdAt: { gte: hourAgo },
+      status: { in: ["clicked", "settled"] },
+    },
+    _count: { _all: true },
+  });
+  const rowGroups = await prisma.click.groupBy({
+    by: ["senderShopId"],
+    where: { createdAt: { gte: hourAgo } },
+    _count: { _all: true },
+  });
+  const flagged = new Map<string, { clicks: number; rows: number }>();
+  for (const group of clickGroups) {
+    if (group._count._all >= SPIKE_CLICKS) {
+      flagged.set(group.senderShopId, {
+        clicks: group._count._all,
+        rows: 0,
+      });
+    }
+  }
+  for (const group of rowGroups) {
+    if (group._count._all >= SPIKE_VIEW_ROWS) {
+      const existing = flagged.get(group.senderShopId);
+      flagged.set(group.senderShopId, {
+        clicks: existing ? existing.clicks : 0,
+        rows: group._count._all,
+      });
+    }
+  }
+  const flaggedShops = flagged.size
+    ? await prisma.shop.findMany({
+        where: { id: { in: Array.from(flagged.keys()) } },
+      })
+    : [];
 
   return {
     authed: true,
@@ -85,6 +136,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       title: ad.title,
       advertiser: ad.shop.domain,
       reason: ad.disabledReason ?? "",
+    })),
+    spikes: flaggedShops.map((shop) => ({
+      id: shop.id,
+      domain: shop.domain,
+      suspended: shop.suspended,
+      clicks: flagged.get(shop.id)?.clicks ?? 0,
+      rows: flagged.get(shop.id)?.rows ?? 0,
     })),
   };
 };
@@ -227,6 +285,26 @@ export default function Operator() {
       ) : (
         <>
           <Button fields={{ intent: "logout" }} label="Log out" />
+
+          <h2>Unusual activity, last hour ({data.spikes.length})</h2>
+          {data.spikes.length === 0 ? <p>Nothing unusual.</p> : null}
+          {data.spikes.map((spike) => (
+            <div key={spike.id} style={box}>
+              <strong>{spike.domain}</strong>
+              <br />
+              {spike.clicks} clicks and {spike.rows} ad-view rows in the last
+              hour
+              {spike.suspended ? <em> (already suspended)</em> : null}
+              <div style={{ marginTop: 8 }}>
+                {!spike.suspended ? (
+                  <Button
+                    fields={{ intent: "suspendShop", shopId: spike.id }}
+                    label="Suspend store"
+                  />
+                ) : null}
+              </div>
+            </div>
+          ))}
 
           <h2>Open reports ({data.reports.length})</h2>
           {data.reports.length === 0 ? <p>No open reports.</p> : null}
