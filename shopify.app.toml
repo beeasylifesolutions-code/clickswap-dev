@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "34a6295cdf0c02a141d3f3cc0a2c8464"
-name = "clickswap-dev"
+name = "PostSwap"
 application_url = "https://clickswap-dev.onrender.com"
 embedded = true
 
