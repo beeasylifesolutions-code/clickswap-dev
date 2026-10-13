@@ -6,7 +6,8 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { setupSlots } from "../products.server";
 
-// Every plan has the same number of slots and own offers
+// Backup text offers: shown on the Thank You page only when the server has
+// nothing else to show.
 const MAX_OFFERS = 3;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -18,22 +19,14 @@ type Offer = {
   end: string;
 };
 
-const parsePlan = (value: unknown) => {
-  const number = Number(value);
-  return number === 2 || number === 3 ? number : 1;
-};
-
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  try {
-    await prisma.shop.upsert({
-      where: { domain: session.shop },
-      update: {},
-      create: { domain: session.shop },
-    });
-  } catch (error) {
-    console.error("Could not save shop", error);
-  }
+  const shop = await prisma.shop.upsert({
+    where: { domain: session.shop },
+    update: {},
+    create: { domain: session.shop },
+  });
+
   const response = await admin.graphql(
     `#graphql
     query ReadSettings {
@@ -43,9 +36,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           value
         }
         enabled: metafield(namespace: "$app", key: "enabled") {
-          value
-        }
-        plan: metafield(namespace: "$app", key: "plan") {
           value
         }
       }
@@ -61,8 +51,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     offers = [];
   }
   const enabled = json.data?.shop?.enabled?.value !== "false";
-  const plan = parsePlan(json.data?.shop?.plan?.value);
-  return { offers, enabled, plan };
+
+  const [slotCount, viewCount] = await Promise.all([
+    prisma.slot.count({ where: { shopId: shop.id, active: true } }),
+    prisma.click.count({
+      where: { senderShopId: shop.id, viewId: { not: null } },
+    }),
+  ]);
+
+  return {
+    offers,
+    enabled,
+    slotsDone: slotCount > 0,
+    blocksSeen: viewCount > 0,
+    swapDone: shop.swapEnabled && shop.consentAt !== null,
+  };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -125,8 +128,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return errors.length > 0 ? (errors[0].message as string) : null;
   };
 
-  // One-button setup: turns the switch on and adds a starter offer
-  // only if the merchant has no offers yet. Never overwrites their work.
+  // One-button setup: turns the app on, fills the 6 slots from the best
+  // sellers, and adds a starter backup offer only if there are none.
+  // Never overwrites the merchant's work.
   if (form.get("intent") === "setup") {
     let existing: unknown[] = [];
     try {
@@ -171,7 +175,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const enabled = form.get("enabled") !== null;
-  const plan = parsePlan(form.get("plan"));
 
   const offers: Offer[] = [];
   for (let i = 1; i <= MAX_OFFERS; i++) {
@@ -206,100 +209,110 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       type: "single_line_text_field",
       value: enabled ? "true" : "false",
     },
-    {
-      ownerId: shopId,
-      namespace: "$app",
-      key: "plan",
-      type: "single_line_text_field",
-      value: String(plan),
-    },
   ]);
   if (problem) return { ok: false, message: problem };
   await syncKillSwitch(enabled);
   return { ok: true, message: "Settings saved" };
 };
 
-const valueOf = (event: Event) =>
-  (event.currentTarget as HTMLInputElement).value;
-
 export default function Index() {
-  const { offers, enabled, plan: savedPlan } = useLoaderData<typeof loader>();
+  const { offers, enabled, slotsDone, blocksSeen, swapDone } =
+    useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const setupFetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   const saving = fetcher.state !== "idle";
   const settingUp = setupFetcher.state !== "idle";
 
-  const [plan, setPlan] = useState(savedPlan);
-  const [drafts, setDrafts] = useState(() =>
-    [0, 1, 2].map((i) => ({
-      title: offers[i]?.title ?? "",
-      text: offers[i]?.text ?? "",
-      code: offers[i]?.code ?? "",
-    })),
-  );
-
-  const update = (index: number, field: string, value: string) => {
-    setDrafts((previous) =>
-      previous.map((draft, i) =>
-        i === index ? { ...draft, [field]: value } : draft,
-      ),
-    );
-  };
-
   useEffect(() => {
-    if (fetcher.data?.ok) {
-      shopify.toast.show("Settings saved");
-    }
+    if (fetcher.data?.ok) shopify.toast.show("Settings saved");
   }, [fetcher.data, shopify]);
 
-  // After "Set up for me", fill the form with the freshly saved values
   useEffect(() => {
     if (setupFetcher.data?.ok) {
-      shopify.toast.show("All set. Two steps left for you below.");
-      setDrafts(
-        [0, 1, 2].map((i) => ({
-          title: offers[i]?.title ?? "",
-          text: offers[i]?.text ?? "",
-          code: offers[i]?.code ?? "",
-        })),
-      );
+      shopify.toast.show("Your slots are filled. Two steps left below.");
     }
-  }, [setupFetcher.data, shopify, offers]);
+  }, [setupFetcher.data, shopify]);
 
-  const previewOffers = drafts.filter((draft) => draft.title.trim() !== "");
   const formKey = JSON.stringify([offers, enabled]);
 
+  const Status = ({ done }: { done: boolean }) => (
+    <s-badge tone={done ? "success" : "warning"}>
+      {done ? "Done" : "To do"}
+    </s-badge>
+  );
+
   return (
-    <s-page heading="Your Thank you page offers">
+    <s-page heading="Welcome to PostSwap">
       <s-stack gap="large">
-        <s-section heading="Quick setup">
+        <s-section heading="Get set up in 3 steps">
           <s-stack gap="base">
-            <s-text>
-              One click turns your offers on, fills your slots with your top 3
-              best sellers, and adds a starter offer you can edit. It never
-              changes slots or offers you already filled in.
-            </s-text>
-            <setupFetcher.Form method="post">
-              <input type="hidden" name="intent" value="setup" />
-              <s-button type="submit" variant="primary" loading={settingUp}>
-                Set up for me
-              </s-button>
-            </setupFetcher.Form>
-            {setupFetcher.data && !setupFetcher.data.ok ? (
-              <s-banner tone="critical">{setupFetcher.data.message}</s-banner>
-            ) : null}
-            <s-text type="strong">Two steps only you can do:</s-text>
-            <s-text>
-              1. Open the Traffic swap page and tick the agreement box. That
-              has to be your own click.
-            </s-text>
-            <s-link href="/app/swap">Go to Traffic swap</s-link>
-            <s-text>
-              2. In Shopify, go to Settings, Checkout, Customize. Open the
-              Thank you page and add the "thank-you-offers" app block. Shopify
-              does not let apps place it for you.
-            </s-text>
+            <s-box border="base" borderRadius="base" padding="base">
+              <s-stack gap="small">
+                <s-stack direction="inline" gap="base">
+                  <s-heading>1. Fill your slots</s-heading>
+                  <Status done={slotsDone} />
+                </s-stack>
+                <s-text>
+                  One click picks your top 3 products and fills your 6 slots (3
+                  on the Order Confirmation page, 3 on the Thank You page). It
+                  never changes slots you already filled in.
+                </s-text>
+                <setupFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="setup" />
+                  <s-button
+                    type="submit"
+                    variant="primary"
+                    loading={settingUp}
+                  >
+                    Set up for me
+                  </s-button>
+                </setupFetcher.Form>
+                {setupFetcher.data && !setupFetcher.data.ok ? (
+                  <s-banner tone="critical">
+                    {setupFetcher.data.message}
+                  </s-banner>
+                ) : null}
+                <s-link href="/app/slots">Choose your own products</s-link>
+              </s-stack>
+            </s-box>
+
+            <s-box border="base" borderRadius="base" padding="base">
+              <s-stack gap="small">
+                <s-stack direction="inline" gap="base">
+                  <s-heading>2. Add the two blocks</s-heading>
+                  <Status done={blocksSeen} />
+                </s-stack>
+                <s-text>
+                  Shopify only lets you place these yourself. In Settings, then
+                  Checkout, then Customize: open the Thank you page and add the
+                  "thank-you-offers" block, then open the Order status page and
+                  add the "order-status-offers" block. Save each page.
+                </s-text>
+                <s-link
+                  href="shopify:admin/settings/checkout/editor"
+                  target="_blank"
+                >
+                  Open the checkout editor
+                </s-link>
+              </s-stack>
+            </s-box>
+
+            <s-box border="base" borderRadius="base" padding="base">
+              <s-stack gap="small">
+                <s-stack direction="inline" gap="base">
+                  <s-heading>3. Turn on the swap (optional)</s-heading>
+                  <Status done={swapDone} />
+                </s-stack>
+                <s-text>
+                  Swap shows other stores' products on your Thank You page, and
+                  yours on theirs. It needs your agreement, and your store needs
+                  at least 50 paid orders in the last 30 days. Without it, your
+                  own products still fill every slot.
+                </s-text>
+                <s-link href="/app/swap">Go to Swap ads</s-link>
+              </s-stack>
+            </s-box>
           </s-stack>
         </s-section>
 
@@ -307,57 +320,22 @@ export default function Index() {
           <s-stack gap="large">
             <s-section heading="Main switch">
               <s-switch
-                label="Show my offers on the Thank you page"
+                label="Show PostSwap on my Thank you page"
                 name="enabled"
                 defaultChecked={enabled}
               />
               <s-text>
-                When this is off, nothing shows on your Thank you page.
+                When this is off, nothing from PostSwap shows on your Thank you
+                page, and your store is not part of the swap.
               </s-text>
             </s-section>
 
-            <s-section heading="Plan (testing only)">
-              <s-select
-                label="Pick a plan"
-                name="plan"
-                value={String(plan)}
-                onChange={(event: Event) => setPlan(parsePlan(valueOf(event)))}
-              >
-                <s-option value="1">Tier 1: $40 per month (1,500+ orders)</s-option>
-                <s-option value="2">Tier 2: $80 per month (3,000+ orders)</s-option>
-                <s-option value="3">Tier 3: $160 per month (6,000+ orders)</s-option>
-              </s-select>
-              <s-text>
-                Every plan has 3 slots. Plans differ by order minimum and daily
-                limits. This picker is temporary. Real billing replaces it
-                later.
-              </s-text>
-            </s-section>
-
-            <s-section heading="Live preview">
-              <s-stack gap="base">
-                {previewOffers.length === 0 ? (
-                  <s-text>
-                    Type a title in Offer 1 below and your preview shows up
-                    here.
-                  </s-text>
-                ) : (
-                  previewOffers.map((draft, index) => (
-                    <s-banner key={index} heading={draft.title}>
-                      <s-stack gap="base">
-                        {draft.text ? <s-text>{draft.text}</s-text> : null}
-                        {draft.code ? (
-                          <s-text type="strong">Code: {draft.code}</s-text>
-                        ) : null}
-                      </s-stack>
-                    </s-banner>
-                  ))
-                )}
-              </s-stack>
-            </s-section>
-
-            <s-section heading={`Offers (up to ${MAX_OFFERS})`}>
+            <s-section heading={`Backup text offers (up to ${MAX_OFFERS})`}>
               <s-stack gap="large">
+                <s-text>
+                  These show on your Thank you page only if PostSwap has no
+                  products to show there. Most stores can leave this alone.
+                </s-text>
                 {[0, 1, 2].map((i) => (
                   <s-stack key={i} gap="small">
                     <s-heading>Offer {i + 1}</s-heading>
@@ -365,25 +343,16 @@ export default function Index() {
                       label="Title"
                       name={`title${i + 1}`}
                       defaultValue={offers[i]?.title ?? ""}
-                      onInput={(event: Event) =>
-                        update(i, "title", valueOf(event))
-                      }
                     />
                     <s-text-field
                       label="Message"
                       name={`text${i + 1}`}
                       defaultValue={offers[i]?.text ?? ""}
-                      onInput={(event: Event) =>
-                        update(i, "text", valueOf(event))
-                      }
                     />
                     <s-text-field
                       label="Discount code (optional)"
                       name={`code${i + 1}`}
                       defaultValue={offers[i]?.code ?? ""}
-                      onInput={(event: Event) =>
-                        update(i, "code", valueOf(event))
-                      }
                     />
                     <s-date-field
                       label="Start date (optional)"
