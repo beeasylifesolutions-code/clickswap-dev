@@ -101,7 +101,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     return redirect("/operator", {
       headers: {
-        "Set-Cookie": `${COOKIE}=${expected}; Path=/operator; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`,
+        "Set-Cookie": `${COOKIE}=${expected}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`,
       },
     });
   }
@@ -109,7 +109,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "logout") {
     return redirect("/operator", {
       headers: {
-        "Set-Cookie": `${COOKIE}=; Path=/operator; HttpOnly; Secure; SameSite=Strict; Max-Age=0`,
+        "Set-Cookie": `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`,
       },
     });
   }
