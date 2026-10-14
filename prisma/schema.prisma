@@ -58,6 +58,7 @@ model Shop {
   ads            Ad[]
   slots          Slot[]
   pinnedStores   PinnedStore[]
+  ownEvents      OwnEvent[]
   blockedStores  BlockedStore[]
   reports        Report[]
   ledger         CreditLedger[]
@@ -194,4 +195,23 @@ model PinnedStore {
   createdAt DateTime @default(now())
 
   @@unique([shopId, domain])
+}
+
+// Views and clicks on a store's OWN products (not partner ads)
+model OwnEvent {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  // "order_confirmation" or "thank_you"
+  surface   String
+  // "view" or "click"
+  kind      String
+  slotId    String?
+  title     String?
+  // Hashed order id, so one order counts as one view
+  orderKey  String?
+  createdAt DateTime @default(now())
+
+  @@index([shopId, createdAt])
+  @@index([shopId, surface, orderKey])
 }

@@ -59,24 +59,27 @@ async function readOwnOffers(domain: string) {
 }
 
 // Reads the store's own product slots for the Order Confirmation page.
-async function readProductSlots(domain: string) {
+// Product links go through our server so clicks can be counted.
+async function readProductSlots(domain: string, baseUrl: string) {
   try {
     const shop = await prisma.shop.findUnique({ where: { domain } });
-    if (!shop) return [];
+    if (!shop) return { shopId: null, products: [] };
     const slots = await prisma.slot.findMany({
       where: { shopId: shop.id, surface: "order_confirmation", active: true },
       orderBy: { position: "asc" },
     });
-    return slots
+    const products = slots
       .filter((slot) => slot.title)
       .map((slot) => ({
+        slotId: slot.id,
         title: slot.title,
         imageUrl: slot.imageUrl,
         priceText: slot.priceText,
-        url: slot.productUrl,
+        url: slot.productUrl ? `${baseUrl}/own/${slot.id}` : null,
       }));
+    return { shopId: shop.id, products };
   } catch (error) {
-    return [];
+    return { shopId: null, products: [] };
   }
 }
 
@@ -98,6 +101,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return cors(Response.json({ ads: [], products: [], offers: [] }));
   }
 
-  const products = await readProductSlots(domain);
+  const baseUrl =
+    // eslint-disable-next-line no-undef
+    process.env.SHOPIFY_APP_URL || new URL(request.url).origin;
+  const { shopId, products } = await readProductSlots(domain, baseUrl);
+
+  // Count one view for each own product shown. Never let this break the page.
+  try {
+    if (shopId && products.length > 0) {
+      await prisma.ownEvent.createMany({
+        data: products.map((product) => ({
+          shopId,
+          surface: "order_confirmation",
+          kind: "view",
+          slotId: product.slotId,
+          title: product.title,
+        })),
+      });
+    }
+  } catch {
+    // analytics must never stop the page from loading
+  }
+
   return cors(Response.json({ ads: [], products, offers }));
 };

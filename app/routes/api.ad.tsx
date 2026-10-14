@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { pickSwapAds } from "../swapads.server";
@@ -13,8 +14,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { cors, sessionToken } = await authenticate.public.checkout(request);
   const domain = String(sessionToken.dest).replace(/^https?:\/\//, "");
 
+  // The order this page belongs to (not sent in the checkout editor preview)
+  const body = await request
+    .clone()
+    .json()
+    .catch(() => null);
+  const orderId =
+    body && typeof body.orderId === "string" && body.orderId
+      ? body.orderId
+      : null;
+
   // Partner ads (already limited by caps, blocklists, kill switch and so on)
-  const ads = await pickSwapAds(domain);
+  const ads = await pickSwapAds(domain, orderId);
 
   // Image and price for each partner ad
   const extra =
@@ -44,6 +55,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       })
     : [];
 
+  // Own product links go through our server so clicks can be counted
+  const baseUrl =
+    // eslint-disable-next-line no-undef
+    process.env.SHOPIFY_APP_URL || new URL(request.url).origin;
+
   // Each slot shows a partner ad when it is set to swap and one is available,
   // and otherwise the store's own product, so a slot is never empty.
   const items: any[] = [];
@@ -60,13 +76,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (slot.title) {
         items.push({
           kind: "own",
+          slotId: slot.id,
           title: slot.title,
           imageUrl: slot.imageUrl,
           priceText: slot.priceText,
-          url: slot.productUrl,
+          url: slot.productUrl ? `${baseUrl}/own/${slot.id}` : null,
         });
       }
     }
+  }
+
+  // Count one view of the own products per order. Never let this break the page.
+  try {
+    const ownShown = items.filter((item) => item.kind === "own");
+    if (shop && orderId && ownShown.length > 0) {
+      const orderKey = createHash("sha256")
+        .update(`${shop.id}:${orderId}`)
+        .digest("hex");
+      const seen = await prisma.ownEvent.findFirst({
+        where: { shopId: shop.id, surface: "thank_you", kind: "view", orderKey },
+      });
+      if (!seen) {
+        await prisma.ownEvent.createMany({
+          data: ownShown.map((item) => ({
+            shopId: shop.id,
+            surface: "thank_you",
+            kind: "view",
+            slotId: item.slotId,
+            title: item.title,
+            orderKey,
+          })),
+        });
+      }
+    }
+  } catch {
+    // analytics must never stop the page from loading
   }
 
   return cors(Response.json({ ads, items }));
