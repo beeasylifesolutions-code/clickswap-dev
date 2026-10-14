@@ -40,7 +40,10 @@ export async function pickSwapAds(
 ): Promise<ServedAd[]> {
   const me = await prisma.shop.findUnique({
     where: { domain },
-    include: { blockedStores: { select: { domain: true } } },
+    include: {
+      blockedStores: { select: { domain: true } },
+      pinnedStores: { select: { domain: true } },
+    },
   });
 
   // Only stores with swap on, consent given, enough paid orders,
@@ -133,8 +136,8 @@ export async function pickSwapAds(
           : {}),
       },
     },
-    include: { shop: { select: { ordersLast30: true } } },
-    take: 50,
+    include: { shop: { select: { ordersLast30: true, domain: true } } },
+    take: 200,
   });
 
   // Advertisers must also meet the order minimum
@@ -156,8 +159,14 @@ export async function pickSwapAds(
 
   if (ads.length === 0) return [];
 
+  // Shuffle, then put ads from pinned stores first
+  const pinnedDomains = new Set(me.pinnedStores.map((pin) => pin.domain));
+  const rank = (d: string) => (pinnedDomains.has(d) ? 0 : 1);
+  const shuffled = [...ads]
+    .sort(() => Math.random() - 0.5)
+    .sort((a, b) => rank(a.shop.domain) - rank(b.shop.domain));
+
   // Pick up to MAX_SLOTS ads, never two from the same store
-  const shuffled = [...ads].sort(() => Math.random() - 0.5);
   const seenShops = new Set<string>();
   const chosen: typeof ads = [];
   for (const ad of shuffled) {

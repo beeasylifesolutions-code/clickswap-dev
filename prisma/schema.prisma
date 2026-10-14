@@ -57,6 +57,7 @@ model Shop {
 
   ads            Ad[]
   slots          Slot[]
+  pinnedStores   PinnedStore[]
   blockedStores  BlockedStore[]
   reports        Report[]
   ledger         CreditLedger[]
@@ -182,4 +183,15 @@ model CreditLedger {
   createdAt DateTime @default(now())
 
   @@index([shopId, createdAt])
+}
+
+// A partner store this store wants to see first
+model PinnedStore {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  domain    String
+  createdAt DateTime @default(now())
+
+  @@unique([shopId, domain])
 }
