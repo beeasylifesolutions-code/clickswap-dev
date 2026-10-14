@@ -31,7 +31,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const now = Date.now();
   const since = new Date(now - days * DAY);
 
-  const [balance, pendingEarned, pendingSpent, clicks, recent] =
+  const [balance, pendingEarned, pendingSpent, clicks, recent, ownEvents] =
     await Promise.all([
       prisma.creditLedger.aggregate({
         where: { shopId: shop.id },
@@ -64,6 +64,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         },
         orderBy: { usedAt: "desc" },
         take: 5,
+      }),
+      prisma.ownEvent.findMany({
+        where: { shopId: shop.id, createdAt: { gte: since } },
+        select: { surface: true, kind: true, title: true, createdAt: true },
+        take: 100000,
       }),
     ]);
 
@@ -106,6 +111,39 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const totalSent = sum(sentSeries);
   const totalReceived = sum(receivedSeries);
 
+  // Own products: views and clicks, in total and for each product
+  const ownViewDay = new Map<string, number>();
+  const ownByProduct = new Map<string, { views: number; clicks: number }>();
+  let ownViews = 0;
+  let ownClicks = 0;
+  for (const event of ownEvents) {
+    const name = event.title ?? "Product";
+    const entry = ownByProduct.get(name) ?? { views: 0, clicks: 0 };
+    if (event.kind === "view") {
+      entry.views += 1;
+      ownViews += 1;
+      const key = dayKey(event.createdAt);
+      ownViewDay.set(key, (ownViewDay.get(key) ?? 0) + 1);
+    } else if (event.kind === "click") {
+      entry.clicks += 1;
+      ownClicks += 1;
+    }
+    ownByProduct.set(name, entry);
+  }
+  const ownViewsSeries = labels.map((label) => ownViewDay.get(label) ?? 0);
+  const ownProducts = Array.from(ownByProduct.entries())
+    .map(([title, entry]) => ({
+      title,
+      views: entry.views,
+      clicks: entry.clicks,
+      rate:
+        entry.views > 0
+          ? `${((entry.clicks / entry.views) * 100).toFixed(1)}%`
+          : "-",
+    }))
+    .sort((a, b) => b.views - a.views)
+    .slice(0, 10);
+
   const today = dayKey(new Date(now));
   const plan = shop.plan ?? 1;
 
@@ -128,6 +166,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shownOnOthers,
     clickRate:
       totalViews > 0 ? `${((totalSent / totalViews) * 100).toFixed(1)}%` : "-",
+    ownViews,
+    ownClicks,
+    ownClickRate:
+      ownViews > 0 ? `${((ownClicks / ownViews) * 100).toFixed(1)}%` : "-",
+    ownViewsSeries,
+    ownProducts,
     planName: PLAN_NAMES[plan] ?? "Starter",
     viewsToday: viewSets.get(today)?.size ?? 0,
     clicksToday: sent.get(today) ?? 0,
@@ -248,6 +292,34 @@ export default function Dashboard() {
             Waiting in the 24-hour hold: +{data.pendingEarned} earned, -
             {data.pendingSpent} to be spent.
           </s-text>
+        </s-section>
+
+        <s-section heading="Your own products">
+          <s-stack direction="block" gap="base">
+            <s-grid gridTemplateColumns="1fr 1fr 1fr" gap="base">
+              <Tile label="Product views" value={data.ownViews} />
+              <Tile label="Product clicks" value={data.ownClicks} />
+              <Tile label="Click rate" value={data.ownClickRate} />
+            </s-grid>
+            <BarChart
+              values={data.ownViewsSeries}
+              labels={data.labels}
+              title="Own product views per day"
+            />
+            {data.ownProducts.length === 0 ? (
+              <s-text>
+                No views yet. They appear once customers see your products on
+                the Thank You and Order Confirmation pages.
+              </s-text>
+            ) : (
+              data.ownProducts.map((product) => (
+                <s-text key={product.title}>
+                  {product.title}: {product.views} views, {product.clicks}{" "}
+                  clicks ({product.rate})
+                </s-text>
+              ))
+            )}
+          </s-stack>
         </s-section>
 
         <s-section heading={`Today's limits (${data.planName} plan)`}>
