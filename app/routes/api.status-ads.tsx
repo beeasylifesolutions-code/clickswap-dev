@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate, unauthenticated } from "../shopify.server";
 import { MAX_SLOTS } from "../swapads.server";
+import { chooseVariant, productFor, trackedUrl } from "../abtest.server";
 import prisma from "../db.server";
 
 type Offer = {
@@ -60,6 +62,7 @@ async function readOwnOffers(domain: string) {
 
 // Reads the store's own product slots for the Order Confirmation page.
 // Product links go through our server so clicks can be counted.
+// If an A/B test runs on a slot, each page load is randomly A or B.
 async function readProductSlots(domain: string, baseUrl: string) {
   try {
     const shop = await prisma.shop.findUnique({ where: { domain } });
@@ -70,13 +73,18 @@ async function readProductSlots(domain: string, baseUrl: string) {
     });
     const products = slots
       .filter((slot) => slot.title)
-      .map((slot) => ({
-        slotId: slot.id,
-        title: slot.title,
-        imageUrl: slot.imageUrl,
-        priceText: slot.priceText,
-        url: slot.productUrl ? `${baseUrl}/own/${slot.id}` : null,
-      }));
+      .map((slot) => {
+        const variant = chooseVariant(slot, randomUUID());
+        const shown = productFor(slot, variant);
+        return {
+          slotId: slot.id,
+          variant,
+          title: shown.title,
+          imageUrl: shown.imageUrl,
+          priceText: shown.priceText,
+          url: shown.productUrl ? trackedUrl(baseUrl, slot.id, variant) : null,
+        };
+      });
     return { shopId: shop.id, products };
   } catch (error) {
     return { shopId: null, products: [] };
@@ -116,6 +124,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           kind: "view",
           slotId: product.slotId,
           title: product.title,
+          variant: product.variant ?? null,
         })),
       });
     }

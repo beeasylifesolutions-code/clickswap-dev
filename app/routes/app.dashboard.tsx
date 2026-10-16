@@ -15,7 +15,37 @@ const PLAN_NAMES: Record<number, string> = {
   4: "Enterprise",
 };
 
+const SURFACE_NAMES: Record<string, string> = {
+  thank_you: "Thank You page",
+  order_confirmation: "Order Confirmation page",
+};
+
+// A/B tests need this many views on each product before we name a winner
+const AB_MIN_VIEWS = 50;
+
 const dayKey = (date: Date) => date.toISOString().slice(0, 10);
+
+const pct = (clicks: number, views: number) =>
+  views > 0 ? `${((clicks / views) * 100).toFixed(1)}%` : "-";
+
+type Side = { views: number; clicks: number };
+
+// Plain-language result of an A/B test (two-proportion check, 95% confidence)
+function abVerdict(a: Side, b: Side) {
+  if (a.views < AB_MIN_VIEWS || b.views < AB_MIN_VIEWS) {
+    return `Too early to call. Each product needs at least ${AB_MIN_VIEWS} views (A has ${a.views}, B has ${b.views}).`;
+  }
+  const pa = a.clicks / a.views;
+  const pb = b.clicks / b.views;
+  const pooled = (a.clicks + b.clicks) / (a.views + b.views);
+  const se = Math.sqrt(pooled * (1 - pooled) * (1 / a.views + 1 / b.views));
+  if (se === 0) return "No clicks yet on either product.";
+  const z = (pa - pb) / se;
+  if (Math.abs(z) < 1.96) {
+    return "No clear winner yet. The difference could still be chance.";
+  }
+  return `${pa > pb ? "Product A" : "Product B"} is winning, and it is unlikely to be chance.`;
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -31,46 +61,64 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const now = Date.now();
   const since = new Date(now - days * DAY);
 
-  const [balance, pendingEarned, pendingSpent, clicks, recent, ownEvents] =
-    await Promise.all([
-      prisma.creditLedger.aggregate({
-        where: { shopId: shop.id },
-        _sum: { delta: true },
-      }),
-      prisma.click.count({
-        where: { senderShopId: shop.id, status: "clicked" },
-      }),
-      prisma.click.count({
-        where: { advertiserShopId: shop.id, status: "clicked" },
-      }),
-      prisma.click.findMany({
-        where: {
-          createdAt: { gte: since },
-          OR: [{ senderShopId: shop.id }, { advertiserShopId: shop.id }],
-        },
-        select: {
-          createdAt: true,
-          usedAt: true,
-          viewId: true,
-          senderShopId: true,
-          advertiserShopId: true,
-        },
-        take: 100000,
-      }),
-      prisma.click.findMany({
-        where: {
-          usedAt: { not: null },
-          OR: [{ senderShopId: shop.id }, { advertiserShopId: shop.id }],
-        },
-        orderBy: { usedAt: "desc" },
-        take: 5,
-      }),
-      prisma.ownEvent.findMany({
-        where: { shopId: shop.id, createdAt: { gte: since } },
-        select: { surface: true, kind: true, title: true, createdAt: true },
-        take: 100000,
-      }),
-    ]);
+  const [
+    balance,
+    pendingEarned,
+    pendingSpent,
+    clicks,
+    recent,
+    ownEvents,
+    runningSlots,
+  ] = await Promise.all([
+    prisma.creditLedger.aggregate({
+      where: { shopId: shop.id },
+      _sum: { delta: true },
+    }),
+    prisma.click.count({
+      where: { senderShopId: shop.id, status: "clicked" },
+    }),
+    prisma.click.count({
+      where: { advertiserShopId: shop.id, status: "clicked" },
+    }),
+    prisma.click.findMany({
+      where: {
+        createdAt: { gte: since },
+        OR: [{ senderShopId: shop.id }, { advertiserShopId: shop.id }],
+      },
+      select: {
+        createdAt: true,
+        usedAt: true,
+        viewId: true,
+        senderShopId: true,
+        advertiserShopId: true,
+      },
+      take: 100000,
+    }),
+    prisma.click.findMany({
+      where: {
+        usedAt: { not: null },
+        OR: [{ senderShopId: shop.id }, { advertiserShopId: shop.id }],
+      },
+      orderBy: { usedAt: "desc" },
+      take: 5,
+    }),
+    prisma.ownEvent.findMany({
+      where: { shopId: shop.id, createdAt: { gte: since } },
+      select: {
+        surface: true,
+        kind: true,
+        title: true,
+        slotId: true,
+        variant: true,
+        createdAt: true,
+      },
+      take: 100000,
+    }),
+    prisma.slot.findMany({
+      where: { shopId: shop.id, abActive: true },
+      select: { id: true },
+    }),
+  ]);
 
   // Every day in the period, oldest first
   const labels: string[] = [];
@@ -116,6 +164,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const ownByProduct = new Map<string, { views: number; clicks: number }>();
   let ownViews = 0;
   let ownClicks = 0;
+
+  // A/B tests: views and clicks for A and B on each slot
+  const abBySlot = new Map<
+    string,
+    {
+      surface: string;
+      a: Side & { title: string };
+      b: Side & { title: string };
+    }
+  >();
+
   for (const event of ownEvents) {
     const name = event.title ?? "Product";
     const entry = ownByProduct.get(name) ?? { views: 0, clicks: 0 };
@@ -129,6 +188,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ownClicks += 1;
     }
     ownByProduct.set(name, entry);
+
+    if (event.slotId && (event.variant === "a" || event.variant === "b")) {
+      const group = abBySlot.get(event.slotId) ?? {
+        surface: event.surface,
+        a: { views: 0, clicks: 0, title: "" },
+        b: { views: 0, clicks: 0, title: "" },
+      };
+      const side = event.variant === "a" ? group.a : group.b;
+      if (event.kind === "view") side.views += 1;
+      else if (event.kind === "click") side.clicks += 1;
+      if (!side.title && event.title) side.title = event.title;
+      abBySlot.set(event.slotId, group);
+    }
   }
   const ownViewsSeries = labels.map((label) => ownViewDay.get(label) ?? 0);
   const ownProducts = Array.from(ownByProduct.entries())
@@ -136,13 +208,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       title,
       views: entry.views,
       clicks: entry.clicks,
-      rate:
-        entry.views > 0
-          ? `${((entry.clicks / entry.views) * 100).toFixed(1)}%`
-          : "-",
+      rate: pct(entry.clicks, entry.views),
     }))
     .sort((a, b) => b.views - a.views)
     .slice(0, 10);
+
+  const runningIds = new Set(runningSlots.map((slot) => slot.id));
+  const abTests = Array.from(abBySlot.entries()).map(([slotId, group]) => ({
+    slotId,
+    page: SURFACE_NAMES[group.surface] ?? group.surface,
+    running: runningIds.has(slotId),
+    aTitle: group.a.title || "Product A",
+    bTitle: group.b.title || "Product B",
+    aViews: group.a.views,
+    aClicks: group.a.clicks,
+    aRate: pct(group.a.clicks, group.a.views),
+    bViews: group.b.views,
+    bClicks: group.b.clicks,
+    bRate: pct(group.b.clicks, group.b.views),
+    verdict: abVerdict(group.a, group.b),
+  }));
 
   const today = dayKey(new Date(now));
   const plan = shop.plan ?? 1;
@@ -164,14 +249,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     totalSent,
     totalReceived,
     shownOnOthers,
-    clickRate:
-      totalViews > 0 ? `${((totalSent / totalViews) * 100).toFixed(1)}%` : "-",
+    clickRate: pct(totalSent, totalViews),
     ownViews,
     ownClicks,
-    ownClickRate:
-      ownViews > 0 ? `${((ownClicks / ownViews) * 100).toFixed(1)}%` : "-",
+    ownClickRate: pct(ownClicks, ownViews),
     ownViewsSeries,
     ownProducts,
+    abTests,
     planName: PLAN_NAMES[plan] ?? "Starter",
     viewsToday: viewSets.get(today)?.size ?? 0,
     clicksToday: sent.get(today) ?? 0,
@@ -317,6 +401,41 @@ export default function Dashboard() {
                   {product.title}: {product.views} views, {product.clicks}{" "}
                   clicks ({product.rate})
                 </s-text>
+              ))
+            )}
+          </s-stack>
+        </s-section>
+
+        <s-section heading="A/B tests">
+          <s-stack direction="block" gap="base">
+            {data.abTests.length === 0 ? (
+              <s-text>
+                No A/B tests yet. On the Slots page, click "Test a second
+                product" on any slot to compare two products.
+              </s-text>
+            ) : (
+              data.abTests.map((test) => (
+                <s-box
+                  key={test.slotId}
+                  border="base"
+                  borderRadius="base"
+                  padding="base"
+                >
+                  <s-stack direction="block" gap="small">
+                    <s-heading>
+                      {test.page} {test.running ? "(running)" : "(ended)"}
+                    </s-heading>
+                    <s-text>
+                      A: {test.aTitle} - {test.aViews} views, {test.aClicks}{" "}
+                      clicks ({test.aRate})
+                    </s-text>
+                    <s-text>
+                      B: {test.bTitle} - {test.bViews} views, {test.bClicks}{" "}
+                      clicks ({test.bRate})
+                    </s-text>
+                    <s-text type="strong">{test.verdict}</s-text>
+                  </s-stack>
+                </s-box>
               ))
             )}
           </s-stack>

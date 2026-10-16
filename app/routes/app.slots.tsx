@@ -122,6 +122,69 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       create: { shopId: shop.id, surface, position, ...data },
     });
     message = "Product saved";
+  } else if (intent === "setB") {
+    // Start an A/B test: pick a second product for a slot that already has one
+    const productGid = String(form.get("productGid") || "");
+    const title = String(form.get("title") || "").slice(0, 80);
+    const imageUrl = String(form.get("imageUrl") || "") || null;
+    const priceText = String(form.get("priceText") || "") || null;
+    const productUrl = String(form.get("productUrl") || "");
+    if (!productGid || !title || !productUrl.startsWith("https://")) {
+      return { ok: false, message: "Could not read that product." };
+    }
+    const existing = await prisma.slot.findUnique({ where });
+    if (!existing || !existing.title) {
+      return { ok: false, message: "Choose Product A for this slot first." };
+    }
+    if (existing.productGid === productGid) {
+      return {
+        ok: false,
+        message: "Pick a different product for B. It matches Product A.",
+      };
+    }
+    await prisma.slot.update({
+      where: { id: existing.id },
+      data: {
+        abActive: true,
+        abStartedAt: new Date(),
+        bProductGid: productGid,
+        bTitle: title,
+        bImageUrl: imageUrl,
+        bPriceText: priceText,
+        bProductUrl: productUrl,
+      },
+    });
+    message = "A/B test started";
+  } else if (intent === "keepA" || intent === "keepB") {
+    // End the test. Keep A: drop B. Keep B: B becomes the slot's product.
+    const existing = await prisma.slot.findUnique({ where });
+    if (!existing) return { ok: false, message: "That slot does not exist." };
+    const cleared = {
+      abActive: false,
+      abStartedAt: null,
+      bProductGid: null,
+      bTitle: null,
+      bImageUrl: null,
+      bPriceText: null,
+      bProductUrl: null,
+    };
+    if (intent === "keepB" && existing.bTitle && existing.bProductUrl) {
+      await prisma.slot.update({
+        where: { id: existing.id },
+        data: {
+          ...cleared,
+          productGid: existing.bProductGid,
+          title: existing.bTitle,
+          imageUrl: existing.bImageUrl,
+          priceText: existing.bPriceText,
+          productUrl: existing.bProductUrl,
+        },
+      });
+      message = "Product B is now the slot's product";
+    } else {
+      await prisma.slot.update({ where: { id: existing.id }, data: cleared });
+      message = "Test ended, keeping Product A";
+    }
   } else if (intent === "mode") {
     const mode = String(form.get("mode") || "");
     if (surface !== "thank_you" || !MODES.includes(mode)) {
@@ -185,7 +248,12 @@ export default function SlotsPage() {
     fetcher.submit(data, { method: "post" });
   };
 
-  const choose = async (surface: string, position: number) => {
+  // intent "set" picks Product A, intent "setB" picks the A/B test's Product B
+  const choose = async (
+    surface: string,
+    position: number,
+    intent: "set" | "setB" = "set",
+  ) => {
     const selected: any = await (shopify as any).resourcePicker({
       type: "product",
       multiple: false,
@@ -206,7 +274,7 @@ export default function SlotsPage() {
       }
     }
     submit({
-      intent: "set",
+      intent,
       surface,
       position: String(position),
       productGid: product.id,
@@ -226,6 +294,9 @@ export default function SlotsPage() {
               <s-text>{surface.note}</s-text>
               {[1, 2, 3].map((position) => {
                 const slot = find(surface.key, position);
+                const testing = Boolean(
+                  slot && slot.abActive && slot.bTitle && slot.bProductUrl,
+                );
                 return (
                   <s-box
                     key={position}
@@ -245,6 +316,7 @@ export default function SlotsPage() {
                             />
                           ) : null}
                           <s-stack gap="small">
+                            {testing ? <s-badge>Product A</s-badge> : null}
                             <s-text type="strong">{slot.title}</s-text>
                             {slot.priceText ? (
                               <s-text>{slot.priceText}</s-text>
@@ -254,6 +326,64 @@ export default function SlotsPage() {
                       ) : (
                         <s-text>Empty. Choose a product for this slot.</s-text>
                       )}
+
+                      {testing && slot ? (
+                        <s-box
+                          border="base"
+                          borderRadius="base"
+                          padding="base"
+                        >
+                          <s-stack gap="small">
+                            <s-heading>A/B test running</s-heading>
+                            <s-text>
+                              Shoppers are split 50/50 between Product A and
+                              Product B. Results are on your Dashboard.
+                            </s-text>
+                            <s-stack direction="inline" gap="base">
+                              {slot.bImageUrl ? (
+                                <s-thumbnail
+                                  src={slot.bImageUrl}
+                                  alt={slot.bTitle ?? "Product B"}
+                                  size="small"
+                                />
+                              ) : null}
+                              <s-stack gap="small">
+                                <s-badge>Product B</s-badge>
+                                <s-text type="strong">{slot.bTitle}</s-text>
+                                {slot.bPriceText ? (
+                                  <s-text>{slot.bPriceText}</s-text>
+                                ) : null}
+                              </s-stack>
+                            </s-stack>
+                            <s-stack direction="inline" gap="base">
+                              <s-button
+                                disabled={busy}
+                                onClick={() =>
+                                  submit({
+                                    intent: "keepA",
+                                    surface: surface.key,
+                                    position: String(position),
+                                  })
+                                }
+                              >
+                                End test, keep A
+                              </s-button>
+                              <s-button
+                                disabled={busy}
+                                onClick={() =>
+                                  submit({
+                                    intent: "keepB",
+                                    surface: surface.key,
+                                    position: String(position),
+                                  })
+                                }
+                              >
+                                End test, keep B
+                              </s-button>
+                            </s-stack>
+                          </s-stack>
+                        </s-box>
+                      ) : null}
 
                       {surface.key === "thank_you" && slot ? (
                         <s-select
@@ -284,6 +414,16 @@ export default function SlotsPage() {
                         >
                           {slot && slot.title ? "Change product" : "Choose product"}
                         </s-button>
+                        {slot && slot.title && !testing ? (
+                          <s-button
+                            disabled={busy}
+                            onClick={() =>
+                              choose(surface.key, position, "setB")
+                            }
+                          >
+                            Test a second product
+                          </s-button>
+                        ) : null}
                         {slot && slot.title ? (
                           <s-button
                             variant="tertiary"

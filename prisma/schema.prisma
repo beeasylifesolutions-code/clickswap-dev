@@ -103,7 +103,7 @@ model Slot {
   // "self_promo", "swap_first" or "locked_store"
   mode       String   @default("self_promo")
   active     Boolean  @default(true)
-  // The store's own product shown in this slot
+  // The store's own product shown in this slot (Product A)
   productGid String?
   title      String?
   imageUrl   String?
@@ -111,6 +111,14 @@ model Slot {
   productUrl String?
   // For locked_store mode: the partner store pinned here
   lockedDomain String?
+  // A/B test: when abActive is true, shoppers are split between A and B
+  abActive      Boolean   @default(false)
+  abStartedAt   DateTime?
+  bProductGid   String?
+  bTitle        String?
+  bImageUrl     String?
+  bPriceText    String?
+  bProductUrl   String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -208,6 +216,8 @@ model OwnEvent {
   kind      String
   slotId    String?
   title     String?
+  // A/B test: "a" or "b" (empty when no test was running)
+  variant   String?
   // Hashed order id, so one order counts as one view
   orderKey  String?
   createdAt DateTime @default(now())

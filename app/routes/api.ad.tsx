@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { pickSwapAds } from "../swapads.server";
+import { chooseVariant, productFor, trackedUrl } from "../abtest.server";
 import prisma from "../db.server";
 
 // Handles the "preflight" check Shopify sends before the real request
@@ -62,6 +63,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Each slot shows a partner ad when it is set to swap and one is available,
   // and otherwise the store's own product, so a slot is never empty.
+  // If an A/B test runs on a slot, the order decides whether it shows A or B.
   const items: any[] = [];
   if (slots.length === 0) {
     items.push(...partners.slice(0, 3));
@@ -74,13 +76,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         continue;
       }
       if (slot.title) {
+        const variant = chooseVariant(slot, orderId ?? randomUUID());
+        const shown = productFor(slot, variant);
         items.push({
           kind: "own",
           slotId: slot.id,
-          title: slot.title,
-          imageUrl: slot.imageUrl,
-          priceText: slot.priceText,
-          url: slot.productUrl ? `${baseUrl}/own/${slot.id}` : null,
+          variant,
+          title: shown.title,
+          imageUrl: shown.imageUrl,
+          priceText: shown.priceText,
+          url: shown.productUrl ? trackedUrl(baseUrl, slot.id, variant) : null,
         });
       }
     }
@@ -104,6 +109,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             kind: "view",
             slotId: item.slotId,
             title: item.title,
+            variant: item.variant ?? null,
             orderKey,
           })),
         });
