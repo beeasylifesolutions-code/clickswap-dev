@@ -5,21 +5,11 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { meetsMinimum } from "../orders.server";
-
-const CATEGORIES = [
-  "Apparel & accessories",
-  "Beauty & personal care",
-  "Food & drink",
-  "Health & wellness",
-  "Home & garden",
-  "Electronics & gadgets",
-  "Jewelry & watches",
-  "Pets",
-  "Sports & outdoors",
-  "Toys, kids & baby",
-  "Arts & crafts",
-  "Other",
-];
+import {
+  ALL_CATEGORIES,
+  NORMAL_CATEGORIES,
+  RESTRICTED_CATEGORIES,
+} from "../categories";
 
 const clean = (value: FormDataEntryValue | null, max: number) =>
   String(value ?? "").trim().slice(0, max);
@@ -62,6 +52,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     swapEnabled: shop.swapEnabled,
     hasConsent: shop.consentAt !== null,
     niche: shop.niche ?? "",
+    showRestricted: shop.showRestricted,
     blockedCategories: shop.blockedCategories,
     blockedStores: shop.blockedStores.map((block) => block.domain),
   };
@@ -108,9 +99,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // intent === "save"
   const killSwitch = form.get("killSwitch") !== null;
   const wantsSwap = form.get("swapEnabled") !== null;
+  const showRestricted = form.get("showRestricted") !== null;
   const nicheRaw = clean(form.get("niche"), 40);
-  const niche = CATEGORIES.includes(nicheRaw) ? nicheRaw : null;
-  const blockedCategories = CATEGORIES.filter(
+  const niche = ALL_CATEGORIES.includes(nicheRaw) ? nicheRaw : null;
+  const blockedCategories = NORMAL_CATEGORIES.filter(
     (_, index) => form.get(`cat_${index}`) !== null,
   );
 
@@ -119,6 +111,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ok: false,
       message:
         "To turn swap on, first agree to the terms on the Swap ads page.",
+    };
+  }
+  if (wantsSwap && !niche) {
+    return {
+      ok: false,
+      message: "Choose your store's category before turning swap on.",
     };
   }
   if (wantsSwap && !meetsMinimum(shop.ordersLast30)) {
@@ -176,6 +174,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       killSwitch,
       swapEnabled: wantsSwap && shop.consentAt !== null,
       niche,
+      showRestricted,
       blockedCategories,
     },
   });
@@ -267,8 +266,9 @@ export default function SafetyPage() {
             <s-section heading="Your store's category">
               <s-stack direction="block" gap="base">
                 <s-text>
-                  Other stores can block whole categories. Choose yours so
-                  stores that don't want it can skip your ad.
+                  Required to use the swap. Other stores can block whole
+                  categories, so choose the one that fits your products. A store
+                  with no category is never shown to anyone.
                 </s-text>
                 <s-select
                   label="Category"
@@ -277,12 +277,33 @@ export default function SafetyPage() {
                   onChange={(event: any) => setNiche(valueOf(event))}
                 >
                   <s-option value="">Not set</s-option>
-                  {CATEGORIES.map((category) => (
+                  {ALL_CATEGORIES.map((category) => (
                     <s-option key={category} value={category}>
                       {category}
                     </s-option>
                   ))}
                 </s-select>
+                <s-text>
+                  Stores that sell adult (18+), alcohol, tobacco, weapons or
+                  gambling products must choose the matching category. Choosing
+                  a different one to avoid the filter breaks the PostSwap rules,
+                  and the store can be removed.
+                </s-text>
+              </s-stack>
+            </s-section>
+
+            <s-section heading="Adult and restricted stores">
+              <s-stack direction="block" gap="base">
+                <s-text>
+                  Ads from stores in these categories are hidden from your
+                  pages: {RESTRICTED_CATEGORIES.join(", ")}. Leave this off
+                  unless your own store sells these products.
+                </s-text>
+                <s-switch
+                  label="Also show ads from adult and restricted stores"
+                  name="showRestricted"
+                  defaultChecked={saved.showRestricted}
+                />
               </s-stack>
             </s-section>
 
@@ -292,7 +313,7 @@ export default function SafetyPage() {
                   Ads from stores in the categories you tick will never show on
                   your pages.
                 </s-text>
-                {CATEGORIES.map((category, index) => (
+                {NORMAL_CATEGORIES.map((category, index) => (
                   <s-checkbox
                     key={category}
                     label={category}

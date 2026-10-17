@@ -39,7 +39,8 @@ model Shop {
   plan        Int       @default(1)
   swapEnabled Boolean   @default(false)
   consentAt   DateTime?
-  // The store's own category. Other stores can block a whole category.
+  // The store's own category (required to take part in the swap).
+  // Other stores can block a whole category.
   niche       String?
   ordersLast30    Int       @default(0)
   ordersCheckedAt DateTime?
@@ -50,6 +51,8 @@ model Shop {
   suspendedReason String?
   // Categories this store never wants to see ads from
   blockedCategories String[] @default([])
+  // Off by default: adult and restricted stores are hidden from this store
+  showRestricted Boolean @default(false)
   // Set once the store has shown its first 5 valid network ads
   poolEligibleAt DateTime?
   createdAt   DateTime  @default(now())

@@ -9,6 +9,7 @@ import {
   meetsMinimum,
   refreshOrderCount,
 } from "../orders.server";
+import { ALL_CATEGORIES } from "../categories";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -42,6 +43,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     swapEnabled: shop.swapEnabled,
     consent: shop.consentAt !== null,
+    niche: shop.niche ?? "",
     balance: balance._sum.delta ?? 0,
     orders,
     minimum: MINIMUM_ORDERS,
@@ -81,11 +83,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const wantsSwap = form.get("swapEnabled") !== null;
   const consent = form.get("consent") !== null;
+  const nicheRaw = String(form.get("niche") ?? "").trim();
+  const niche = ALL_CATEGORIES.includes(nicheRaw) ? nicheRaw : null;
 
   if (wantsSwap && !consent) {
     return {
       ok: false,
       error: "Please tick the consent box before turning swap on.",
+      message: "",
+    };
+  }
+
+  if (wantsSwap && !niche) {
+    return {
+      ok: false,
+      error: "Please choose your store's category before turning swap on.",
       message: "",
     };
   }
@@ -116,10 +128,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     data: {
       swapEnabled: consent && wantsSwap,
       consentAt: consent ? (shop.consentAt ?? new Date()) : null,
+      niche,
     },
   });
   return { ok: true, error: "", message: "Swap settings saved" };
 };
+
+const valueOf = (event: any) => String(event.currentTarget?.value ?? "");
 
 export default function SwapPage() {
   const saved = useLoaderData<typeof loader>();
@@ -129,6 +144,7 @@ export default function SwapPage() {
 
   const [swapEnabled, setSwapEnabled] = useState(saved.swapEnabled);
   const [consent, setConsent] = useState(saved.consent);
+  const [niche, setNiche] = useState(saved.niche);
 
   useEffect(() => {
     if (fetcher.data?.ok) shopify.toast.show(fetcher.data.message);
@@ -166,6 +182,31 @@ export default function SwapPage() {
                   Thank you page, and your Thank you page can show products
                   from other stores. If swap is off, your Thank you page only
                   shows your own products.
+                </s-text>
+                <s-select
+                  label="Your store's category (required)"
+                  name="niche"
+                  value={niche}
+                  onChange={(event: any) => setNiche(valueOf(event))}
+                >
+                  <s-option value="">Choose a category</s-option>
+                  {ALL_CATEGORIES.map((category) => (
+                    <s-option key={category} value={category}>
+                      {category}
+                    </s-option>
+                  ))}
+                </s-select>
+                {saved.niche === "" ? (
+                  <s-banner tone="warning">
+                    Without a category, your products are not shown on other
+                    stores. Choose one and save.
+                  </s-banner>
+                ) : null}
+                <s-text>
+                  Stores that sell adult (18+), alcohol, tobacco, weapons or
+                  gambling products must choose the matching category. Choosing
+                  a different one to avoid the filter breaks the PostSwap rules,
+                  and the store can be removed.
                 </s-text>
                 <s-switch
                   label="Turn swap on"

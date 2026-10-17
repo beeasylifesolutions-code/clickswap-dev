@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import prisma from "./db.server";
 import { meetsMinimum } from "./orders.server";
+import { RESTRICTED_CATEGORIES } from "./categories";
 
 // Every tier gets the same number of ad slots
 export const MAX_SLOTS = 3;
@@ -107,10 +108,17 @@ export async function pickSwapAds(
   if (clicksToday >= clickCap) return [];
 
   const blockedDomains = me.blockedStores.map((block) => block.domain);
-  const blockedCategories = me.blockedCategories;
+
+  // Categories this store will not see: the ones it blocked, plus adult and
+  // restricted stores unless this store turned them on.
+  const hiddenCategories = [
+    ...me.blockedCategories,
+    ...(me.showRestricted ? [] : RESTRICTED_CATEGORIES),
+  ];
 
   // Ads come only from OTHER stores that also have swap on, and never from
-  // stores or categories this store blocked, or stores that blocked this store
+  // stores or categories this store blocked, or stores that blocked this store.
+  // An advertiser with no category set is never shown.
   const candidates = await prisma.ad.findMany({
     where: {
       active: true,
@@ -126,14 +134,7 @@ export async function pickSwapAds(
         poolEligibleAt: { not: null },
         domain: { not: domain, notIn: blockedDomains },
         blockedStores: { none: { domain } },
-        ...(blockedCategories.length > 0
-          ? {
-              OR: [
-                { niche: null },
-                { niche: { notIn: blockedCategories } },
-              ],
-            }
-          : {}),
+        niche: { not: null, notIn: hiddenCategories },
       },
     },
     include: { shop: { select: { ordersLast30: true, domain: true } } },
