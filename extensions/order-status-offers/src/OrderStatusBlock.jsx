@@ -44,10 +44,8 @@ async function loadContent() {
   }
 }
 
-// Scratch tickets and surprise gifts.
-// TEMPORARY: also returns a debug line so we can see why nothing shows.
+// Scratch tickets and surprise gifts. Any problem just shows none.
 async function loadRewards() {
-  const hasOrder = readOrderId() ? "yes" : "NO";
   try {
     const token = await shopify.sessionToken.get();
     const response = await fetch(`${APP_URL}/api/status-reward`, {
@@ -58,21 +56,11 @@ async function loadRewards() {
       },
       body: JSON.stringify({ orderId: readOrderId() }),
     });
-    const text = await response.text();
-    if (!response.ok) {
-      return {
-        rewards: [],
-        debug: `order id: ${hasOrder}, server said ${response.status} ${text.slice(0, 80)}`,
-      };
-    }
-    const data = JSON.parse(text);
-    const list = data && Array.isArray(data.rewards) ? data.rewards : [];
-    return { rewards: list, debug: `order id: ${hasOrder}, server ok, rewards: ${list.length}` };
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data && Array.isArray(data.rewards) ? data.rewards : [];
   } catch (error) {
-    return {
-      rewards: [],
-      debug: `order id: ${hasOrder}, error: ${String(error).slice(0, 100)}`,
-    };
+    return [];
   }
 }
 
@@ -111,22 +99,17 @@ function RewardCard({ reward }) {
 function Extension() {
   const [items, setItems] = useState(null);
   const [rewards, setRewards] = useState([]);
-  const [debug, setDebug] = useState("");
 
   useEffect(() => {
     loadContent().then(setItems);
-    loadRewards().then((result) => {
-      setRewards(result.rewards);
-      setDebug(result.debug);
-    });
+    loadRewards().then(setRewards);
   }, []);
 
   const list = items || [];
-  if (list.length === 0 && rewards.length === 0 && !debug) return null;
+  if (list.length === 0 && rewards.length === 0) return null;
 
   return (
     <s-stack gap="base">
-      {debug ? <s-text>Debug: {debug}</s-text> : null}
       {rewards.map((reward) => (
         <RewardCard key={reward.id} reward={reward} />
       ))}
