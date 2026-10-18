@@ -263,3 +263,28 @@ model RewardPlay {
 
   @@unique([rewardId, orderKey])
 }
+
+// Customer survey (one per store, anonymous answers)
+model Survey {
+  id        String         @id @default(cuid())
+  shopId    String         @unique
+  question  String
+  options   String[]
+  active    Boolean        @default(false)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  answers   SurveyAnswer[]
+}
+
+model SurveyAnswer {
+  id        String   @id @default(cuid())
+  surveyId  String
+  survey    Survey   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  orderKey  String // hashed order reference, never the real order number
+  question  String // the question as it was when answered
+  answer    String
+  createdAt DateTime @default(now())
+
+  @@unique([surveyId, orderKey])
+  @@index([surveyId, createdAt])
+}
