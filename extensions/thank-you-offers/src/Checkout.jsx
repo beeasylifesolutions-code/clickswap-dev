@@ -57,20 +57,48 @@ function readOffers() {
   }
 }
 
+// The order number lets the server show each order the same prize and count one view per order.
+function readOrderId() {
+  try {
+    const id = shopify.orderConfirmation?.value?.order?.id;
+    return id ? String(id) : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+async function post(path) {
+  const token = await shopify.sessionToken.get();
+  const response = await fetch(`${APP_URL}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ orderId: readOrderId() }),
+  });
+  if (!response.ok) return null;
+  return response.json();
+}
+
 // Asks your server for the 3 slots (partner products and your own products).
 // Any problem returns null, and the block falls back to your text offers.
 async function loadItems() {
   try {
-    const token = await shopify.sessionToken.get();
-    const response = await fetch(`${APP_URL}/api/ad`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
+    const data = await post("/api/ad");
     return data && Array.isArray(data.items) ? data.items.slice(0, SLOTS) : null;
   } catch (error) {
     return null;
+  }
+}
+
+// Scratch tickets and surprise gifts. Any problem just shows none.
+async function loadRewards() {
+  try {
+    const data = await post("/api/reward");
+    return data && Array.isArray(data.rewards) ? data.rewards : [];
+  } catch (error) {
+    return [];
   }
 }
 
@@ -103,22 +131,61 @@ function Card({ item }) {
   );
 }
 
+function RewardCard({ reward }) {
+  const [revealed, setRevealed] = useState(false);
+  const scratch = reward.kind === "scratch";
+  return (
+    <s-box border="base" borderRadius="base" padding="base">
+      <s-stack gap="small">
+        <s-text type="strong">{reward.title}</s-text>
+        {revealed ? (
+          <s-stack gap="small">
+            <s-text type="strong">{reward.prize.label}</s-text>
+            {reward.prize.code ? (
+              <s-text type="emphasis">Your code: {reward.prize.code}</s-text>
+            ) : null}
+            <s-text>Use it on your next order.</s-text>
+          </s-stack>
+        ) : (
+          <s-stack gap="small">
+            <s-text>
+              {scratch
+                ? "You have a scratch ticket. Scratch it to see what you won."
+                : "You have a surprise gift waiting for you."}
+            </s-text>
+            <s-button onClick={() => setRevealed(true)}>
+              {scratch ? "Scratch to reveal" : "Open your gift"}
+            </s-button>
+          </s-stack>
+        )}
+      </s-stack>
+    </s-box>
+  );
+}
+
 function Extension() {
   const [items, setItems] = useState(undefined);
+  const [rewards, setRewards] = useState([]);
 
   useEffect(() => {
     if (!readEnabled()) return;
     loadItems().then(setItems);
+    loadRewards().then(setRewards);
   }, []);
 
   if (!readEnabled()) return null;
   // Wait for the server so the slots do not jump around
   if (items === undefined) return null;
 
+  const rewardCards = rewards.map((reward) => (
+    <RewardCard key={reward.id} reward={reward} />
+  ));
+
   // If the server has nothing, show the store's own text offers
   if (!items || items.length === 0) {
     return (
       <s-stack gap="base">
+        {rewardCards}
         {readOffers().map((offer, index) => (
           <s-banner key={index} heading={offer.title}>
             <s-stack gap="base">
@@ -133,6 +200,7 @@ function Extension() {
 
   return (
     <s-stack gap="base">
+      {rewardCards}
       {items.map((item, index) => (
         <Card key={index} item={item} />
       ))}
