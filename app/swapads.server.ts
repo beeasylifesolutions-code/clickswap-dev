@@ -108,6 +108,11 @@ export async function pickSwapAds(
   if (clicksToday >= clickCap) return [];
 
   const blockedDomains = me.blockedStores.map((block) => block.domain);
+  const pinnedList = me.pinnedStores.map((pin) => pin.domain);
+
+  // Partner-only mode: only the stores this store pinned may show.
+  // Nothing pinned means no partner ads, so its own products fill the slots.
+  if (me.pinnedOnly && pinnedList.length === 0) return [];
 
   // Categories this store will not see: the ones it blocked, plus adult and
   // restricted stores unless this store turned them on.
@@ -132,7 +137,11 @@ export async function pickSwapAds(
         suspended: false,
         // Earn-first rule: the advertiser has to have shown partner ads first
         poolEligibleAt: { not: null },
-        domain: { not: domain, notIn: blockedDomains },
+        domain: {
+          not: domain,
+          notIn: blockedDomains,
+          ...(me.pinnedOnly ? { in: pinnedList } : {}),
+        },
         blockedStores: { none: { domain } },
         niche: { not: null, notIn: hiddenCategories },
       },
@@ -161,7 +170,7 @@ export async function pickSwapAds(
   if (ads.length === 0) return [];
 
   // Shuffle, then put ads from pinned stores first
-  const pinnedDomains = new Set(me.pinnedStores.map((pin) => pin.domain));
+  const pinnedDomains = new Set(pinnedList);
   const rank = (d: string) => (pinnedDomains.has(d) ? 0 : 1);
   const shuffled = [...ads]
     .sort(() => Math.random() - 0.5)
