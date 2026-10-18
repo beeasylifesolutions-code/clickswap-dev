@@ -93,12 +93,34 @@ async function loadItems() {
 }
 
 // Scratch tickets and surprise gifts. Any problem just shows none.
+// TEMPORARY: also returns a debug line so we can see why nothing shows.
 async function loadRewards() {
+  const hasOrder = readOrderId() ? "yes" : "NO";
   try {
-    const data = await post("/api/reward");
-    return data && Array.isArray(data.rewards) ? data.rewards : [];
+    const token = await shopify.sessionToken.get();
+    const response = await fetch(`${APP_URL}/api/reward`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ orderId: readOrderId() }),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      return {
+        rewards: [],
+        debug: `order id: ${hasOrder}, server said ${response.status} ${text.slice(0, 80)}`,
+      };
+    }
+    const data = JSON.parse(text);
+    const list = data && Array.isArray(data.rewards) ? data.rewards : [];
+    return { rewards: list, debug: `order id: ${hasOrder}, server ok, rewards: ${list.length}` };
   } catch (error) {
-    return [];
+    return {
+      rewards: [],
+      debug: `order id: ${hasOrder}, error: ${String(error).slice(0, 100)}`,
+    };
   }
 }
 
@@ -166,11 +188,15 @@ function RewardCard({ reward }) {
 function Extension() {
   const [items, setItems] = useState(undefined);
   const [rewards, setRewards] = useState([]);
+  const [debug, setDebug] = useState("");
 
   useEffect(() => {
     if (!readEnabled()) return;
     loadItems().then(setItems);
-    loadRewards().then(setRewards);
+    loadRewards().then((result) => {
+      setRewards(result.rewards);
+      setDebug(result.debug);
+    });
   }, []);
 
   if (!readEnabled()) return null;
@@ -180,11 +206,13 @@ function Extension() {
   const rewardCards = rewards.map((reward) => (
     <RewardCard key={reward.id} reward={reward} />
   ));
+  const debugLine = debug ? <s-text>Debug: {debug}</s-text> : null;
 
   // If the server has nothing, show the store's own text offers
   if (!items || items.length === 0) {
     return (
       <s-stack gap="base">
+        {debugLine}
         {rewardCards}
         {readOffers().map((offer, index) => (
           <s-banner key={index} heading={offer.title}>
@@ -200,6 +228,7 @@ function Extension() {
 
   return (
     <s-stack gap="base">
+      {debugLine}
       {rewardCards}
       {items.map((item, index) => (
         <Card key={index} item={item} />

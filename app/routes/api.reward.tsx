@@ -14,9 +14,16 @@ function pickPrize<T extends { weight: number }>(prizes: T[]): T {
   return prizes[prizes.length - 1];
 }
 
+// The checkout token may hold the store as "shop.myshopify.com" or "https://shop.myshopify.com"
+function domainOf(dest: string): string {
+  const value = String(dest || "");
+  if (value.includes("://")) return new URL(value).hostname;
+  return value.replace(/\/.*$/, "");
+}
+
 const handle = async (request: Request) => {
   const { sessionToken, cors } = await authenticate.public.checkout(request);
-  const domain = new URL(sessionToken.dest).hostname;
+  const domain = domainOf(sessionToken.dest);
 
   let orderId = "";
   try {
