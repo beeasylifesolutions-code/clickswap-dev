@@ -1,14 +1,17 @@
+import { useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useFetcher, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
-const MAX_PINS = 3;
+const MAX_PINS = 10;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const me = await prisma.shop.findUnique({ where: { domain: session.shop } });
-  if (!me) return { partners: [], pinCount: 0, maxPins: MAX_PINS };
+  if (!me) {
+    return { partners: [], pinCount: 0, maxPins: MAX_PINS, pinnedOnly: false };
+  }
 
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const clicks = await prisma.click.findMany({
@@ -70,7 +73,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return b.shows - a.shows;
     });
 
-  return { partners, pinCount: pinned.length, maxPins: MAX_PINS };
+  return {
+    partners,
+    pinCount: pinned.length,
+    maxPins: MAX_PINS,
+    pinnedOnly: me.pinnedOnly,
+  };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -80,6 +88,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const form = await request.formData();
   const intent = String(form.get("intent") || "");
+
+  // Partner-only switch
+  if (intent === "setPinnedOnly") {
+    await prisma.shop.update({
+      where: { id: me.id },
+      data: { pinnedOnly: form.get("value") === "true" },
+    });
+    return { error: "" };
+  }
+
   const domain = String(form.get("domain") || "").trim().toLowerCase();
   if (!domain || domain.length > 255 || domain === me.domain) {
     return { error: "Invalid store." };
@@ -118,23 +136,59 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Partners() {
-  const { partners, pinCount, maxPins } = useLoaderData<typeof loader>();
+  const { partners, pinCount, maxPins, pinnedOnly } =
+    useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const busy = fetcher.state !== "idle";
+  const [onlyMine, setOnlyMine] = useState(pinnedOnly);
   const act = (intent: string, domain: string) =>
     fetcher.submit({ intent, domain }, { method: "post" });
   const error = fetcher.data && "error" in fetcher.data ? fetcher.data.error : "";
+
+  const changeOnlyMine = (checked: boolean) => {
+    setOnlyMine(checked);
+    fetcher.submit(
+      { intent: "setPinnedOnly", value: String(checked) },
+      { method: "post" },
+    );
+  };
 
   return (
     <s-page heading="Partner stores">
       <s-stack gap="base">
         {error ? <s-banner tone="critical">{error}</s-banner> : null}
+
+        <s-section heading="Choose who shows on your Thank You page">
+          <s-stack gap="base">
+            <s-switch
+              label="Only show ads from my chosen partners"
+              checked={onlyMine}
+              onChange={(event: any) =>
+                changeOnlyMine(Boolean(event.currentTarget?.checked))
+              }
+            />
+            <s-text>
+              When this is on, only the stores you pin below can show products
+              on your Thank You page. Every other safety rule still applies.
+              While it is on, no new stores appear in the list, so turn it off
+              if you want to meet more partners.
+            </s-text>
+            {onlyMine && pinCount === 0 ? (
+              <s-banner tone="warning">
+                You have not pinned any stores yet, so your Thank You page will
+                show only your own products. Pin a store below to see its
+                products.
+              </s-banner>
+            ) : null}
+          </s-stack>
+        </s-section>
+
         <s-section heading="Stores that showed up on your Thank You page">
           <s-paragraph>
             These are the stores whose products appeared on your Thank You page
             in the last 30 days. Block a store to never see it again. Pin a
-            store to see it first when it has products available ({pinCount} of{" "}
-            {maxPins} pins used).
+            store to see it first, or to choose it for your partner-only list (
+            {pinCount} of {maxPins} pins used).
           </s-paragraph>
         </s-section>
 
