@@ -228,3 +228,38 @@ model OwnEvent {
   @@index([shopId, createdAt])
   @@index([shopId, surface, orderKey])
 }
+
+// Scratch ticket / surprise gift rewards
+model Reward {
+  id        String        @id @default(cuid())
+  shopId    String
+  kind      String // "scratch" or "gift"
+  title     String
+  active    Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  prizes    RewardPrize[]
+  plays     RewardPlay[]
+
+  @@index([shopId])
+}
+
+model RewardPrize {
+  id        String   @id @default(cuid())
+  rewardId  String
+  reward    Reward   @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+  label     String // what the shopper sees, e.g. "10% off your next order"
+  code      String? // the discount code made in Shopify
+  weight    Int      @default(1) // bigger number = wins more often
+  createdAt DateTime @default(now())
+}
+
+model RewardPlay {
+  id        String   @id @default(cuid())
+  rewardId  String
+  reward    Reward   @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+  orderKey  String // hashed order reference, never the real order number
+  prizeId   String
+  createdAt DateTime @default(now())
+
+  @@unique([rewardId, orderKey])
+}

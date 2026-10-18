@@ -20,6 +20,7 @@ export default function App() {
       <s-app-nav>
         <s-link href="/app">Home</s-link>
         <s-link href="/app/slots">Slots</s-link>
+        <s-link href="/app/rewards">Rewards</s-link>
         <s-link href="/app/dashboard">Dashboard</s-link>
         <s-link href="/app/swap">Swap ads</s-link>
         <s-link href="/app/partners">Partners</s-link>
