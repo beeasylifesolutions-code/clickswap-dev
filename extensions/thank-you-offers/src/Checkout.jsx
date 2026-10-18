@@ -67,7 +67,7 @@ function readOrderId() {
   }
 }
 
-async function post(path) {
+async function post(path, extra) {
   const token = await shopify.sessionToken.get();
   const response = await fetch(`${APP_URL}${path}`, {
     method: "POST",
@@ -75,7 +75,7 @@ async function post(path) {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ orderId: readOrderId() }),
+    body: JSON.stringify({ orderId: readOrderId(), ...(extra || {}) }),
   });
   if (!response.ok) return null;
   return response.json();
@@ -99,6 +99,16 @@ async function loadRewards() {
     return data && Array.isArray(data.rewards) ? data.rewards : [];
   } catch (error) {
     return [];
+  }
+}
+
+// The store's customer survey. Any problem just shows none.
+async function loadSurvey() {
+  try {
+    const data = await post("/api/survey");
+    return data && data.survey ? data.survey : null;
+  } catch (error) {
+    return null;
   }
 }
 
@@ -163,14 +173,47 @@ function RewardCard({ reward }) {
   );
 }
 
+function SurveyCard({ survey }) {
+  const [done, setDone] = useState(false);
+
+  const choose = (answer) => {
+    // Show the thank you straight away; saving happens in the background
+    setDone(true);
+    post("/api/survey", { answer }).catch(() => {});
+  };
+
+  return (
+    <s-box border="base" borderRadius="base" padding="base">
+      <s-stack gap="small">
+        {done ? (
+          <s-text type="strong">Thanks for your answer!</s-text>
+        ) : (
+          <s-stack gap="small">
+            <s-text type="strong">{survey.question}</s-text>
+            <s-stack direction="inline" gap="small">
+              {survey.options.map((option) => (
+                <s-button key={option} onClick={() => choose(option)}>
+                  {option}
+                </s-button>
+              ))}
+            </s-stack>
+          </s-stack>
+        )}
+      </s-stack>
+    </s-box>
+  );
+}
+
 function Extension() {
   const [items, setItems] = useState(undefined);
   const [rewards, setRewards] = useState([]);
+  const [survey, setSurvey] = useState(null);
 
   useEffect(() => {
     if (!readEnabled()) return;
     loadItems().then(setItems);
     loadRewards().then(setRewards);
+    loadSurvey().then(setSurvey);
   }, []);
 
   if (!readEnabled()) return null;
@@ -180,6 +223,7 @@ function Extension() {
   const rewardCards = rewards.map((reward) => (
     <RewardCard key={reward.id} reward={reward} />
   ));
+  const surveyCard = survey ? <SurveyCard survey={survey} /> : null;
 
   // If the server has nothing, show the store's own text offers
   if (!items || items.length === 0) {
@@ -194,6 +238,7 @@ function Extension() {
             </s-stack>
           </s-banner>
         ))}
+        {surveyCard}
       </s-stack>
     );
   }
@@ -204,6 +249,7 @@ function Extension() {
       {items.map((item, index) => (
         <Card key={index} item={item} />
       ))}
+      {surveyCard}
     </s-stack>
   );
 }
