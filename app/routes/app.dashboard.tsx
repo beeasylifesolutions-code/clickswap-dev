@@ -123,6 +123,41 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
   ]);
 
+  // All-time numbers for the milestone badges (not limited to the period)
+  const [
+    allSent,
+    allReceived,
+    allViewGroups,
+    allOwnViews,
+    allOwnClicks,
+    allAbSlots,
+    allRewardPlays,
+    allSurveyAnswers,
+  ] = await Promise.all([
+    prisma.click.count({
+      where: { senderShopId: shop.id, usedAt: { not: null } },
+    }),
+    prisma.click.count({
+      where: { advertiserShopId: shop.id, usedAt: { not: null } },
+    }),
+    prisma.click.groupBy({
+      by: ["viewId"],
+      where: { senderShopId: shop.id, viewId: { not: null } },
+    }),
+    prisma.ownEvent.count({ where: { shopId: shop.id, kind: "view" } }),
+    prisma.ownEvent.count({ where: { shopId: shop.id, kind: "click" } }),
+    prisma.ownEvent.groupBy({
+      by: ["slotId"],
+      where: {
+        shopId: shop.id,
+        variant: { in: ["a", "b"] },
+        slotId: { not: null },
+      },
+    }),
+    prisma.rewardPlay.count({ where: { reward: { shopId: shop.id } } }),
+    prisma.surveyAnswer.count({ where: { survey: { shopId: shop.id } } }),
+  ]);
+
   // Every day in the period, oldest first
   const labels: string[] = [];
   for (let i = days - 1; i >= 0; i--) {
@@ -264,6 +299,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     verdict: abVerdict(group.a, group.b),
   }));
 
+  // Milestone badges: all time, so an earned badge stays earned
+  const finishedTests = allAbSlots.filter(
+    (row) => row.slotId && !runningIds.has(row.slotId),
+  ).length;
+  const milestoneList = [
+    { label: "First click sent", value: allSent, target: 1 },
+    { label: "10 clicks sent", value: allSent, target: 10 },
+    { label: "First click received", value: allReceived, target: 1 },
+    { label: "10 clicks received", value: allReceived, target: 10 },
+    {
+      label: "25 page views with partner ads",
+      value: allViewGroups.length,
+      target: 25,
+    },
+    { label: "First own product click", value: allOwnClicks, target: 1 },
+    { label: "100 own product views", value: allOwnViews, target: 100 },
+    { label: "First A/B test finished", value: finishedTests, target: 1 },
+    { label: "First scratch ticket played", value: allRewardPlays, target: 1 },
+    { label: "10 survey answers", value: allSurveyAnswers, target: 10 },
+  ];
+  const milestones = milestoneList.map((item) => ({
+    label: item.label,
+    earned: item.value >= item.target,
+    progress: `${Math.min(item.value, item.target)} of ${item.target}`,
+  }));
+
   const today = dayKey(new Date(now));
   const plan = shop.plan ?? 1;
 
@@ -291,6 +352,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ownViewsSeries,
     ownProducts,
     bestMinViews: BEST_MIN_VIEWS,
+    milestones,
     abTests,
     planName: PLAN_NAMES[plan] ?? "Starter",
     viewsToday: viewSets.get(today)?.size ?? 0,
@@ -383,6 +445,7 @@ function Tile({ label, value }: { label: string; value: string | number }) {
 
 export default function Dashboard() {
   const data = useLoaderData<typeof loader>();
+  const earnedCount = data.milestones.filter((item) => item.earned).length;
 
   return (
     <s-page heading="Dashboard">
@@ -412,6 +475,26 @@ export default function Dashboard() {
             Waiting in the 24-hour hold: +{data.pendingEarned} earned, -
             {data.pendingSpent} to be spent.
           </s-text>
+        </s-section>
+
+        <s-section
+          heading={`Milestones (${earnedCount} of ${data.milestones.length})`}
+        >
+          <s-stack direction="block" gap="small">
+            <s-text>
+              Counted across all time. Once you earn a badge, it stays.
+            </s-text>
+            {data.milestones.map((item) => (
+              <s-stack key={item.label} direction="inline" gap="base">
+                {item.earned ? (
+                  <s-badge tone="success">Earned</s-badge>
+                ) : (
+                  <s-badge>{item.progress}</s-badge>
+                )}
+                <s-text>{item.label}</s-text>
+              </s-stack>
+            ))}
+          </s-stack>
         </s-section>
 
         <s-section heading="Your own products">
