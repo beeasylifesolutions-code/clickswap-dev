@@ -23,6 +23,9 @@ const SURFACE_NAMES: Record<string, string> = {
 // A/B tests need this many views on each product before we name a winner
 const AB_MIN_VIEWS = 50;
 
+// A product needs this many views before it can be called the best performer
+const BEST_MIN_VIEWS = 10;
+
 const dayKey = (date: Date) => date.toISOString().slice(0, 10);
 
 const pct = (clicks: number, views: number) =>
@@ -159,9 +162,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const totalSent = sum(sentSeries);
   const totalReceived = sum(receivedSeries);
 
-  // Own products: views and clicks, in total and for each product
+  // Own products: views and clicks, in total and for each product on each page
   const ownViewDay = new Map<string, number>();
-  const ownByProduct = new Map<string, { views: number; clicks: number }>();
+  const ownByProduct = new Map<
+    string,
+    { surface: string; title: string; views: number; clicks: number }
+  >();
   let ownViews = 0;
   let ownClicks = 0;
 
@@ -177,7 +183,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   for (const event of ownEvents) {
     const name = event.title ?? "Product";
-    const entry = ownByProduct.get(name) ?? { views: 0, clicks: 0 };
+    const productKey = `${event.surface}|${name}`;
+    const entry = ownByProduct.get(productKey) ?? {
+      surface: event.surface,
+      title: name,
+      views: 0,
+      clicks: 0,
+    };
     if (event.kind === "view") {
       entry.views += 1;
       ownViews += 1;
@@ -187,7 +199,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       entry.clicks += 1;
       ownClicks += 1;
     }
-    ownByProduct.set(name, entry);
+    ownByProduct.set(productKey, entry);
 
     if (event.slotId && (event.variant === "a" || event.variant === "b")) {
       const group = abBySlot.get(event.slotId) ?? {
@@ -203,15 +215,38 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
   const ownViewsSeries = labels.map((label) => ownViewDay.get(label) ?? 0);
-  const ownProducts = Array.from(ownByProduct.entries())
-    .map(([title, entry]) => ({
-      title,
-      views: entry.views,
-      clicks: entry.clicks,
-      rate: pct(entry.clicks, entry.views),
+
+  const productRows = Array.from(ownByProduct.values()).map((entry) => ({
+    title: entry.title,
+    page: SURFACE_NAMES[entry.surface] ?? entry.surface,
+    views: entry.views,
+    clicks: entry.clicks,
+    rate: pct(entry.clicks, entry.views),
+    rateValue: entry.views > 0 ? entry.clicks / entry.views : 0,
+  }));
+
+  // Best performer: highest click rate among products with enough views.
+  // Only named when at least two products qualify and the top one has a click.
+  const qualified = productRows.filter((row) => row.views >= BEST_MIN_VIEWS);
+  let bestKey = "";
+  if (qualified.length >= 2) {
+    const top = [...qualified].sort(
+      (a, b) => b.rateValue - a.rateValue || b.views - a.views,
+    )[0];
+    if (top.clicks > 0) bestKey = `${top.page}|${top.title}`;
+  }
+
+  const ownProducts = productRows
+    .map((row) => ({
+      title: row.title,
+      page: row.page,
+      views: row.views,
+      clicks: row.clicks,
+      rate: row.rate,
+      best: `${row.page}|${row.title}` === bestKey,
     }))
     .sort((a, b) => b.views - a.views)
-    .slice(0, 10);
+    .slice(0, 12);
 
   const runningIds = new Set(runningSlots.map((slot) => slot.id));
   const abTests = Array.from(abBySlot.entries()).map(([slotId, group]) => ({
@@ -255,6 +290,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ownClickRate: pct(ownClicks, ownViews),
     ownViewsSeries,
     ownProducts,
+    bestMinViews: BEST_MIN_VIEWS,
     abTests,
     planName: PLAN_NAMES[plan] ?? "Starter",
     viewsToday: viewSets.get(today)?.size ?? 0,
@@ -396,12 +432,36 @@ export default function Dashboard() {
                 the Thank You and Order Confirmation pages.
               </s-text>
             ) : (
-              data.ownProducts.map((product) => (
-                <s-text key={product.title}>
-                  {product.title}: {product.views} views, {product.clicks}{" "}
-                  clicks ({product.rate})
+              <s-stack direction="block" gap="small">
+                <s-heading>Click rate for each product</s-heading>
+                {data.ownProducts.map((product) => (
+                  <s-box
+                    key={`${product.page}|${product.title}`}
+                    border="base"
+                    borderRadius="base"
+                    padding="base"
+                  >
+                    <s-stack direction="block" gap="small">
+                      <s-stack direction="inline" gap="base">
+                        <s-text type="strong">{product.title}</s-text>
+                        {product.best ? (
+                          <s-badge tone="success">Best performer</s-badge>
+                        ) : null}
+                      </s-stack>
+                      <s-text>{product.page}</s-text>
+                      <s-text>
+                        {product.views} views, {product.clicks} clicks, click
+                        rate {product.rate}
+                      </s-text>
+                    </s-stack>
+                  </s-box>
+                ))}
+                <s-text>
+                  The best performer badge appears once at least two products
+                  have {data.bestMinViews} or more views and the leader has a
+                  click.
                 </s-text>
-              ))
+              </s-stack>
             )}
           </s-stack>
         </s-section>
