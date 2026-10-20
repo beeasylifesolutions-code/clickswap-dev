@@ -53,7 +53,7 @@ model Shop {
   blockedCategories String[] @default([])
   // Off by default: adult and restricted stores are hidden from this store
   showRestricted Boolean @default(false)
-    pinnedOnly      Boolean  @default(false)
+  pinnedOnly     Boolean @default(false)
   // Set once the store has shown its first 5 valid network ads
   poolEligibleAt DateTime?
   createdAt   DateTime  @default(now())

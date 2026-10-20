@@ -114,6 +114,22 @@ export async function pickSwapAds(
   // Nothing pinned means no partner ads, so its own products fill the slots.
   if (me.pinnedOnly && pinnedList.length === 0) return [];
 
+  // Locked stores: Thank You slots set to "locked_store" name one partner
+  // that should show first. A lock only counts while that store is still pinned.
+  const lockedSlots = await prisma.slot.findMany({
+    where: {
+      shopId: me.id,
+      surface: "thank_you",
+      active: true,
+      mode: "locked_store",
+      lockedDomain: { not: null },
+    },
+    select: { lockedDomain: true },
+  });
+  const lockedList = lockedSlots
+    .map((slot) => slot.lockedDomain as string)
+    .filter((d) => pinnedList.includes(d));
+
   // Categories this store will not see: the ones it blocked, plus adult and
   // restricted stores unless this store turned them on.
   const hiddenCategories = [
@@ -169,9 +185,11 @@ export async function pickSwapAds(
 
   if (ads.length === 0) return [];
 
-  // Shuffle, then put ads from pinned stores first
+  // Shuffle, then order: locked stores first, then pinned stores, then the rest
   const pinnedDomains = new Set(pinnedList);
-  const rank = (d: string) => (pinnedDomains.has(d) ? 0 : 1);
+  const lockedDomains = new Set(lockedList);
+  const rank = (d: string) =>
+    lockedDomains.has(d) ? 0 : pinnedDomains.has(d) ? 1 : 2;
   const shuffled = [...ads]
     .sort(() => Math.random() - 0.5)
     .sort((a, b) => rank(a.shop.domain) - rank(b.shop.domain));

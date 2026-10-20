@@ -19,7 +19,7 @@ const SURFACES = [
   },
 ];
 
-const MODES = ["swap_first", "self_promo"];
+const MODES = ["swap_first", "self_promo", "locked_store"];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -27,6 +27,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where: { domain: session.shop },
     update: {},
     create: { domain: session.shop },
+    include: { pinnedStores: { select: { domain: true } } },
   });
   const slots = await prisma.slot.findMany({
     where: { shopId: shop.id },
@@ -47,7 +48,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   } catch (error) {
     currency = "USD";
   }
-  return { slots, currency, domain: session.shop };
+  const pinned = shop.pinnedStores.map((pin) => pin.domain);
+  return { slots, currency, domain: session.shop, pinned };
 };
 
 // Keeps the network ads in step with the Thank You slots:
@@ -76,8 +78,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const shop = await prisma.shop.findUnique({
     where: { domain: session.shop },
+    include: { pinnedStores: { select: { domain: true } } },
   });
   if (!shop) return { ok: false, message: "Shop not found." };
+  const pinned = shop.pinnedStores.map((pin) => pin.domain);
 
   const intent = String(form.get("intent") || "");
   const surface = String(form.get("surface") || "");
@@ -190,11 +194,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (surface !== "thank_you" || !MODES.includes(mode)) {
       return { ok: false, message: "That setting is not available." };
     }
-    await prisma.slot.updateMany({
-      where: { shopId: shop.id, surface, position },
-      data: { mode },
-    });
+    const existing = await prisma.slot.findUnique({ where });
+    if (!existing) return { ok: false, message: "That slot does not exist." };
+    if (mode === "locked_store") {
+      if (pinned.length === 0) {
+        return {
+          ok: false,
+          message:
+            "Pin a partner store on the Partners page first, then lock this slot to it.",
+        };
+      }
+      const keep =
+        existing.lockedDomain && pinned.includes(existing.lockedDomain)
+          ? existing.lockedDomain
+          : pinned[0];
+      await prisma.slot.update({
+        where: { id: existing.id },
+        data: { mode, lockedDomain: keep },
+      });
+    } else {
+      await prisma.slot.update({
+        where: { id: existing.id },
+        data: { mode, lockedDomain: null },
+      });
+    }
     message = "Mode saved";
+  } else if (intent === "lockStore") {
+    const domainChoice = String(form.get("lockedDomain") || "");
+    if (surface !== "thank_you" || !pinned.includes(domainChoice)) {
+      return { ok: false, message: "Choose one of your pinned partners." };
+    }
+    await prisma.slot.updateMany({
+      where: { shopId: shop.id, surface, position, mode: "locked_store" },
+      data: { lockedDomain: domainChoice },
+    });
+    message = "Locked store saved";
   } else if (intent === "clear") {
     await prisma.slot.deleteMany({
       where: { shopId: shop.id, surface, position },
@@ -225,10 +259,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const MODE_LABELS: Record<string, string> = {
   swap_first: "Partner product first, my product as backup",
   self_promo: "My product only",
+  locked_store: "Always show one chosen partner (my product as backup)",
 };
 
 export default function SlotsPage() {
-  const { slots, currency, domain } = useLoaderData<typeof loader>();
+  const { slots, currency, domain, pinned } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   const busy = fetcher.state !== "idle";
@@ -402,6 +437,31 @@ export default function SlotsPage() {
                           {MODES.map((mode) => (
                             <s-option key={mode} value={mode}>
                               {MODE_LABELS[mode]}
+                            </s-option>
+                          ))}
+                        </s-select>
+                      ) : null}
+
+                      {surface.key === "thank_you" &&
+                      slot &&
+                      slot.mode === "locked_store" ? (
+                        <s-select
+                          label="Locked partner store"
+                          value={slot.lockedDomain ?? ""}
+                          onChange={(event: Event) =>
+                            submit({
+                              intent: "lockStore",
+                              surface: surface.key,
+                              position: String(position),
+                              lockedDomain: (
+                                event.currentTarget as HTMLSelectElement
+                              ).value,
+                            })
+                          }
+                        >
+                          {pinned.map((pinnedDomain) => (
+                            <s-option key={pinnedDomain} value={pinnedDomain}>
+                              {pinnedDomain}
                             </s-option>
                           ))}
                         </s-select>
