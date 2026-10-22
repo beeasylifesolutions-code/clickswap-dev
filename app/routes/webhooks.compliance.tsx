@@ -14,11 +14,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "CUSTOMERS_REDACT":
       console.log(`Received ${name} for ${shop}: no customer data stored`);
       break;
-    case "SHOP_REDACT":
+    case "SHOP_REDACT": {
       await prisma.session.deleteMany({ where: { shop } });
-      await prisma.shop.deleteMany({ where: { domain: shop } });
+      const record = await prisma.shop.findUnique({
+        where: { domain: shop },
+        select: { id: true },
+      });
+      if (record) {
+        // These tables are not linked to Shop in the database, so delete them
+        // here. Prizes, plays and survey answers go with them.
+        await prisma.reward.deleteMany({ where: { shopId: record.id } });
+        await prisma.survey.deleteMany({ where: { shopId: record.id } });
+        // Everything else (slots, ads, clicks, credits, pins, blocks, reports,
+        // own-product events) is deleted with the shop automatically.
+        await prisma.shop.delete({ where: { id: record.id } });
+      }
       console.log(`Received SHOP_REDACT for ${shop}: data deleted`);
       break;
+    }
     default:
       console.log(`Received ${name} for ${shop}`);
   }
