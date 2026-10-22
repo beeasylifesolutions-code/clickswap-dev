@@ -24,6 +24,12 @@ function withDiscount(destination: string, rawCode: string | null | undefined) {
 export const loader = async ({ params }: LoaderFunctionArgs) => {
   const token = String(params.token ?? "");
 
+  // The sample ad shown on development stores: no click is recorded and no
+  // credits move. It just opens a short explanation page.
+  if (token === "sample") {
+    return redirect("/sample-ad");
+  }
+
   const click = await prisma.click.findUnique({ where: { token } });
   if (!click) {
     throw new Response("Link not found", { status: 404 });

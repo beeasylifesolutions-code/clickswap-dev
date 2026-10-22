@@ -38,6 +38,40 @@ export async function refreshOrderCount(admin: any, domain: string) {
   return count;
 }
 
+// Asks Shopify whether this is a development (test) store and saves the answer.
+// Development stores are the ones Shopify's reviewers and developers use.
+// If Shopify cannot be reached, the saved answer is kept.
+export async function refreshDevStoreFlag(admin: any, domain: string) {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+      query {
+        shop {
+          plan {
+            partnerDevelopment
+          }
+        }
+      }`,
+    );
+    const json = await response.json();
+    const flag = json?.data?.shop?.plan?.partnerDevelopment;
+    if (typeof flag === "boolean") {
+      await prisma.shop.update({
+        where: { domain },
+        data: { isDevStore: flag },
+      });
+      return flag;
+    }
+  } catch (error) {
+    console.error(error);
+  }
+  const saved = await prisma.shop.findUnique({
+    where: { domain },
+    select: { isDevStore: true },
+  });
+  return saved?.isDevStore ?? false;
+}
+
 // True if the store may use swap ads.
 // SKIP_ORDER_MINIMUM=true is only for testing on the dev store.
 export function meetsMinimum(count: number) {

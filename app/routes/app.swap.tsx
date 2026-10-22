@@ -7,6 +7,7 @@ import prisma from "../db.server";
 import {
   MINIMUM_ORDERS,
   meetsMinimum,
+  refreshDevStoreFlag,
   refreshOrderCount,
 } from "../orders.server";
 import { ALL_CATEGORIES } from "../categories";
@@ -30,6 +31,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Re-check the order count at most once an hour
   let orders = shop.ordersLast30;
+  let devStore = shop.isDevStore;
   const stale =
     !shop.ordersCheckedAt ||
     Date.now() - shop.ordersCheckedAt.getTime() > 60 * 60 * 1000;
@@ -39,6 +41,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } catch (error) {
       console.error(error);
     }
+    devStore = await refreshDevStoreFlag(admin, session.shop);
   }
 
   return {
@@ -48,7 +51,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     balance: balance._sum.delta ?? 0,
     orders,
     minimum: MINIMUM_ORDERS,
-    eligible: meetsMinimum(orders),
+    devStore,
+    eligible: devStore || meetsMinimum(orders),
     ads: ads.map((ad) => ({
       id: ad.id,
       title: ad.title,
@@ -115,7 +119,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         message: "",
       };
     }
-    if (!meetsMinimum(orders)) {
+    // Development (test) stores skip the order minimum
+    const devStore = await refreshDevStoreFlag(admin, session.shop);
+    if (!devStore && !meetsMinimum(orders)) {
       return {
         ok: false,
         error: `Swap needs ${MINIMUM_ORDERS} paid orders in the last 30 days. Your store has ${orders}.`,
@@ -173,11 +179,21 @@ export default function SwapPage() {
                 <s-text type="strong">
                   Your credit balance: {saved.balance}
                 </s-text>
-                <s-banner tone={saved.eligible ? "success" : "warning"}>
-                  {saved.eligible
-                    ? `Your store has ${saved.orders} paid orders in the last 30 days. Swap is available.`
-                    : `Swap needs ${saved.minimum} paid orders in the last 30 days. Your store has ${saved.orders}. You can still use your own products.`}
-                </s-banner>
+                {saved.devStore ? (
+                  <s-banner tone="info">
+                    This is a development (test) store, so the order minimum is
+                    skipped. Instead of real partner ads, your Thank You page
+                    shows one clearly labeled sample partner ad, so you can see
+                    how it looks. Live stores that meet the minimum show real
+                    partner ads.
+                  </s-banner>
+                ) : (
+                  <s-banner tone={saved.eligible ? "success" : "warning"}>
+                    {saved.eligible
+                      ? `Your store has ${saved.orders} paid orders in the last 30 days. Swap is available.`
+                      : `Swap needs ${saved.minimum} paid orders in the last 30 days. Your store has ${saved.orders}. You can still use your own products.`}
+                  </s-banner>
+                )}
                 <s-text>
                   You earn 1 credit when a shopper clicks another store's
                   product on your Thank you page. You spend 1 credit when a

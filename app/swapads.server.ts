@@ -174,6 +174,7 @@ export async function pickSwapAds(
         suspended: false,
         // Earn-first rule: the advertiser has to have shown partner ads first
         poolEligibleAt: { not: null },
+               isDevStore: false, 
         ...(me.circleOnly ? { id: { in: mateIds } } : {}),
         domain: {
           not: domain,

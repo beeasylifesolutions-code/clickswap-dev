@@ -5,6 +5,19 @@ import { pickSwapAds } from "../swapads.server";
 import { chooseVariant, productFor, trackedUrl } from "../abtest.server";
 import prisma from "../db.server";
 
+// Shown only on development (test) stores, such as the stores Shopify's
+// reviewers use. It is not a real partner ad: no credits move and no real
+// store is involved.
+const SAMPLE_PARTNER = {
+  kind: "partner",
+  title: "Sample partner ad",
+  text: "This is how a partner store's product appears on your Thank You page. It is shown on development stores only.",
+  code: null,
+  token: "sample",
+  imageUrl: null,
+  priceText: null,
+};
+
 // Handles the "preflight" check Shopify sends before the real request
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.public.checkout(request);
@@ -25,8 +38,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ? body.orderId
       : null;
 
+  const shop = await prisma.shop.findUnique({ where: { domain } });
+
+  // Development stores never get real partners' ads, so a test click can never
+  // cost a real merchant a credit. They see one labeled sample ad instead.
+  const isDev = Boolean(shop?.isDevStore);
+  const sampleOn = Boolean(
+    isDev &&
+      shop &&
+      shop.swapEnabled &&
+      shop.consentAt &&
+      !shop.killSwitch &&
+      !shop.suspended,
+  );
+
   // Partner ads (already limited by caps, blocklists, kill switch and so on)
-  const ads = await pickSwapAds(domain, orderId);
+  const ads = isDev ? [] : await pickSwapAds(domain, orderId);
 
   // Image and price for each partner ad
   const extra =
@@ -37,18 +64,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         })
       : [];
   const extraById = new Map(extra.map((row) => [row.id, row]));
-  const partners = ads.map((ad) => ({
-    kind: "partner",
-    title: ad.title,
-    text: ad.text,
-    code: ad.code,
-    token: ad.token,
-    imageUrl: extraById.get(ad.id)?.imageUrl ?? null,
-    priceText: extraById.get(ad.id)?.priceText ?? null,
-  }));
+  const partners = isDev
+    ? sampleOn
+      ? [SAMPLE_PARTNER]
+      : []
+    : ads.map((ad) => ({
+        kind: "partner",
+        title: ad.title,
+        text: ad.text,
+        code: ad.code,
+        token: ad.token,
+        imageUrl: extraById.get(ad.id)?.imageUrl ?? null,
+        priceText: extraById.get(ad.id)?.priceText ?? null,
+      }));
 
   // This store's own Thank You slots
-  const shop = await prisma.shop.findUnique({ where: { domain } });
   const slots = shop
     ? await prisma.slot.findMany({
         where: { shopId: shop.id, surface: "thank_you", active: true },
