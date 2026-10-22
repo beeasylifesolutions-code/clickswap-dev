@@ -89,7 +89,13 @@ export default function Privacy() {
         promote. A shopper who clicks a partner ad goes to the advertiser&apos;s
         store. We do not send any shopper information to partner stores.
       </p>
-
+      <h2 style={h2}>Circles</h2>
+      <p>
+        If you create or join a Circle, the other stores in that Circle can see
+        your store address (your myshopify.com domain) and that you are a
+        member. Circle owners can remove members, and you can leave a Circle at
+        any time. Circle invite codes are only shown to the Circle owner.
+      </p>
       <h2 style={h2}>Services we rely on</h2>
       <ul>
         <li>Shopify, for the app platform, sign-in and billing.</li>
