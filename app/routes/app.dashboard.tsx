@@ -14,6 +14,19 @@ const PLAN_NAMES: Record<number, string> = {
   3: "Scale",
   4: "Enterprise",
 };
+// Paid orders a plan covers in 30 days (Enterprise is custom)
+const PLAN_ORDER_CAP: Record<number, number> = {
+  1: 300,
+  2: 1500,
+  3: 5000,
+  4: 1000000,
+};
+const PLAN_PRICE: Record<number, string> = {
+  1: "$29",
+  2: "$79",
+  3: "$199",
+  4: "$399",
+};
 
 const SURFACE_NAMES: Record<string, string> = {
   thank_you: "Thank You page",
@@ -327,6 +340,51 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const today = dayKey(new Date(now));
   const plan = shop.plan ?? 1;
+  const viewCap = DAILY_VIEW_CAP[plan] ?? DAILY_VIEW_CAP[1];
+  const clickCap = DAILY_CLICK_CAP[plan] ?? DAILY_CLICK_CAP[1];
+  const viewsToday = viewSets.get(today)?.size ?? 0;
+  const clicksToday = sent.get(today) ?? 0;
+
+  // Growth tier unlocker: how close the store is to its plan limits,
+  // and what the next plan adds
+  const nextPlan = plan < 4 ? plan + 1 : null;
+  const daysAtLimit = labels.filter(
+    (_, index) => viewsSeries[index] >= viewCap || sentSeries[index] >= clickCap,
+  ).length;
+  const orderCap = PLAN_ORDER_CAP[plan] ?? PLAN_ORDER_CAP[1];
+  const overOrders = shop.ordersLast30 > orderCap;
+  const nearOrders = !overOrders && shop.ordersLast30 >= orderCap * 0.8;
+  const reasons: string[] = [];
+  if (daysAtLimit > 0) {
+    reasons.push(
+      `You reached your daily limit on ${daysAtLimit} of the last ${days} days. On those days your Thank You page showed your own products instead of partner ads.`,
+    );
+  }
+  if (overOrders) {
+    reasons.push(
+      `Your store had ${shop.ordersLast30} paid orders in the last 30 days. ${PLAN_NAMES[plan]} covers up to ${orderCap}.`,
+    );
+  } else if (nearOrders) {
+    reasons.push(
+      `Your store had ${shop.ordersLast30} paid orders in the last 30 days. ${PLAN_NAMES[plan]} covers up to ${orderCap}.`,
+    );
+  }
+  const shopHandle = session.shop.replace(".myshopify.com", "");
+  const upgrade = {
+    planName: PLAN_NAMES[plan] ?? "Starter",
+    nextName: nextPlan ? PLAN_NAMES[nextPlan] : "",
+    nextPrice: nextPlan ? PLAN_PRICE[nextPlan] : "",
+    nextViewCap: nextPlan ? DAILY_VIEW_CAP[nextPlan] : 0,
+    nextClickCap: nextPlan ? DAILY_CLICK_CAP[nextPlan] : 0,
+    nextOrderCap: nextPlan && nextPlan < 4 ? PLAN_ORDER_CAP[nextPlan] : 0,
+    nextIsCustom: nextPlan === 4,
+    ordersLast30: shop.ordersLast30,
+    orderCap,
+    daysAtLimit,
+    reasons,
+    nudge: reasons.length > 0,
+    url: `https://admin.shopify.com/store/${shopHandle}/charges/postswap/pricing_plans`,
+  };
 
   const adIds = [...new Set(recent.map((click) => click.adId))];
   const ads = await prisma.ad.findMany({ where: { id: { in: adIds } } });
@@ -354,11 +412,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     bestMinViews: BEST_MIN_VIEWS,
     milestones,
     abTests,
+    upgrade,
     planName: PLAN_NAMES[plan] ?? "Starter",
-    viewsToday: viewSets.get(today)?.size ?? 0,
-    clicksToday: sent.get(today) ?? 0,
-    viewCap: DAILY_VIEW_CAP[plan] ?? DAILY_VIEW_CAP[1],
-    clickCap: DAILY_CLICK_CAP[plan] ?? DAILY_CLICK_CAP[1],
+    viewsToday,
+    clicksToday,
+    viewCap,
+    clickCap,
     recent: recent.map((click) => ({
       id: click.id,
       direction: click.senderShopId === shop.id ? "Sent" : "Received",
@@ -446,6 +505,7 @@ function Tile({ label, value }: { label: string; value: string | number }) {
 export default function Dashboard() {
   const data = useLoaderData<typeof loader>();
   const earnedCount = data.milestones.filter((item) => item.earned).length;
+  const up = data.upgrade;
 
   return (
     <s-page heading="Dashboard">
@@ -476,6 +536,55 @@ export default function Dashboard() {
             {data.pendingSpent} to be spent.
           </s-text>
         </s-section>
+
+        {up.nextName ? (
+          <s-section heading={`Your plan: ${up.planName}`}>
+            <s-stack direction="block" gap="base">
+              {up.nudge ? (
+                <s-banner tone="warning" heading="You are using your plan fully">
+                  <s-stack direction="block" gap="small">
+                    {up.reasons.map((reason) => (
+                      <s-text key={reason}>{reason}</s-text>
+                    ))}
+                  </s-stack>
+                </s-banner>
+              ) : (
+                <s-text>
+                  You are well inside your plan limits. Here is what the next
+                  plan adds, for when your store grows.
+                </s-text>
+              )}
+              <s-box border="base" borderRadius="base" padding="base">
+                <s-stack direction="block" gap="small">
+                  <s-heading>
+                    {up.nextName} ({up.nextPrice} a month)
+                  </s-heading>
+                  <s-text>
+                    Daily partner-ad page views: {data.viewCap} now, then{" "}
+                    {up.nextViewCap}
+                  </s-text>
+                  <s-text>
+                    Daily clicks you can send: {data.clickCap} now, then{" "}
+                    {up.nextClickCap}
+                  </s-text>
+                  <s-text>
+                    Paid orders covered each month: up to {up.orderCap} now
+                    {up.nextIsCustom
+                      ? ", then custom"
+                      : `, then up to ${up.nextOrderCap}`}
+                  </s-text>
+                  <s-text>
+                    Your store: {up.ordersLast30} paid orders in the last 30
+                    days.
+                  </s-text>
+                  <s-link href={up.url} target="_blank">
+                    See plans and upgrade
+                  </s-link>
+                </s-stack>
+              </s-box>
+            </s-stack>
+          </s-section>
+        ) : null}
 
         <s-section
           heading={`Milestones (${earnedCount} of ${data.milestones.length})`}
