@@ -54,20 +54,24 @@ model Shop {
   // Off by default: adult and restricted stores are hidden from this store
   showRestricted Boolean @default(false)
   pinnedOnly     Boolean @default(false)
+  // Only show ads from stores that share a Circle with this store
+  circleOnly     Boolean @default(false)
   // Set once the store has shown its first 5 valid network ads
   poolEligibleAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  ads            Ad[]
-  slots          Slot[]
-  pinnedStores   PinnedStore[]
-  ownEvents      OwnEvent[]
-  blockedStores  BlockedStore[]
-  reports        Report[]
-  ledger         CreditLedger[]
-  clicksSent     Click[]        @relation("ClicksSent")
-  clicksReceived Click[]        @relation("ClicksReceived")
+  ads              Ad[]
+  slots            Slot[]
+  pinnedStores     PinnedStore[]
+  ownEvents        OwnEvent[]
+  blockedStores    BlockedStore[]
+  reports          Report[]
+  ledger           CreditLedger[]
+  circlesOwned     Circle[]       @relation("CircleOwner")
+  circleMemberships CircleMember[]
+  clicksSent       Click[]        @relation("ClicksSent")
+  clicksReceived   Click[]        @relation("ClicksReceived")
 }
 
 // The ad a store wants partner stores to show (one of its products)
@@ -207,6 +211,33 @@ model PinnedStore {
   createdAt DateTime @default(now())
 
   @@unique([shopId, domain])
+}
+
+// An invite-only group of stores that show each other's ads
+model Circle {
+  id          String   @id @default(cuid())
+  name        String
+  // Short invite code that other stores type to join
+  code        String   @unique
+  ownerShopId String
+  owner       Shop     @relation("CircleOwner", fields: [ownerShopId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  members     CircleMember[]
+
+  @@index([ownerShopId])
+}
+
+// One store inside a Circle (the owner is a member too)
+model CircleMember {
+  id        String   @id @default(cuid())
+  circleId  String
+  circle    Circle   @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([circleId, shopId])
+  @@index([shopId])
 }
 
 // Views and clicks on a store's OWN products (not partner ads)

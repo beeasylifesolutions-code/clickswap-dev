@@ -114,6 +114,27 @@ export async function pickSwapAds(
   // Nothing pinned means no partner ads, so its own products fill the slots.
   if (me.pinnedOnly && pinnedList.length === 0) return [];
 
+  // Circles: stores that share a Circle with this store
+  const myCircles = await prisma.circleMember.findMany({
+    where: { shopId: me.id },
+    select: { circleId: true },
+  });
+  const circleMates =
+    myCircles.length > 0
+      ? await prisma.circleMember.findMany({
+          where: {
+            circleId: { in: myCircles.map((row) => row.circleId) },
+            shopId: { not: me.id },
+          },
+          select: { shopId: true },
+        })
+      : [];
+  const mateIds = [...new Set(circleMates.map((row) => row.shopId))];
+
+  // Circle-only mode: only Circle partners may show.
+  // No Circle partners means no partner ads, so its own products fill the slots.
+  if (me.circleOnly && mateIds.length === 0) return [];
+
   // Locked stores: Thank You slots set to "locked_store" name one partner
   // that should show first. A lock only counts while that store is still pinned.
   const lockedSlots = await prisma.slot.findMany({
@@ -153,6 +174,7 @@ export async function pickSwapAds(
         suspended: false,
         // Earn-first rule: the advertiser has to have shown partner ads first
         poolEligibleAt: { not: null },
+        ...(me.circleOnly ? { id: { in: mateIds } } : {}),
         domain: {
           not: domain,
           notIn: blockedDomains,
@@ -162,7 +184,9 @@ export async function pickSwapAds(
         niche: { not: null, notIn: hiddenCategories },
       },
     },
-    include: { shop: { select: { ordersLast30: true, domain: true } } },
+    include: {
+      shop: { select: { ordersLast30: true, domain: true, id: true } },
+    },
     take: 200,
   });
 
@@ -185,14 +209,22 @@ export async function pickSwapAds(
 
   if (ads.length === 0) return [];
 
-  // Shuffle, then order: locked stores first, then pinned stores, then the rest
+  // Shuffle, then order: locked stores first, then pinned stores,
+  // then Circle partners, then everyone else
   const pinnedDomains = new Set(pinnedList);
   const lockedDomains = new Set(lockedList);
-  const rank = (d: string) =>
-    lockedDomains.has(d) ? 0 : pinnedDomains.has(d) ? 1 : 2;
+  const mateSet = new Set(mateIds);
+  const rank = (ad: { shop: { domain: string; id: string } }) =>
+    lockedDomains.has(ad.shop.domain)
+      ? 0
+      : pinnedDomains.has(ad.shop.domain)
+        ? 1
+        : mateSet.has(ad.shop.id)
+          ? 2
+          : 3;
   const shuffled = [...ads]
     .sort(() => Math.random() - 0.5)
-    .sort((a, b) => rank(a.shop.domain) - rank(b.shop.domain));
+    .sort((a, b) => rank(a) - rank(b));
 
   // Pick up to MAX_SLOTS ads, never two from the same store
   const seenShops = new Set<string>();

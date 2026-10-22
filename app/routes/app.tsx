@@ -25,6 +25,7 @@ export default function App() {
         <s-link href="/app/dashboard">Dashboard</s-link>
         <s-link href="/app/swap">Swap ads</s-link>
         <s-link href="/app/partners">Partners</s-link>
+        <s-link href="/app/circles">Circles</s-link>
         <s-link href="/app/safety">Safety</s-link>
       </s-app-nav>
       <Outlet />
