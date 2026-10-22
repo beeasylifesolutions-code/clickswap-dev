@@ -10,6 +10,7 @@ import {
   refreshOrderCount,
 } from "../orders.server";
 import { ALL_CATEGORIES } from "../categories";
+import { reactivateAds } from "../reactivate.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -131,6 +132,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       niche,
     },
   });
+
+  // Turning swap on (for example after a reinstall) puts the store's ads back
+  // on for the products in its Thank You slots.
+  if (consent && wantsSwap) {
+    await reactivateAds(shop.id);
+  }
+
   return { ok: true, error: "", message: "Swap settings saved" };
 };
 
