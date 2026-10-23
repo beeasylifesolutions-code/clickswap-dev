@@ -3,12 +3,14 @@ import {
   Outlet,
   isRouteErrorResponse,
   useLoaderData,
+  useLocation,
   useRouteError,
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 import { authenticate } from "../shopify.server";
+import { PAGE_HELP } from "../help";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
@@ -19,6 +21,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
+  const location = useLocation();
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  const topic = PAGE_HELP.find((item) => item.path === path);
 
   return (
     <AppProvider apiKey={apiKey}>
@@ -32,7 +37,32 @@ export default function App() {
         <s-link href="/app/partners">Partners</s-link>
         <s-link href="/app/circles">Circles</s-link>
         <s-link href="/app/safety">Safety</s-link>
+        <s-link href="/app/help">Help</s-link>
       </s-app-nav>
+      {topic ? (
+        <div style={{ margin: "12px 16px 0" }}>
+          <details
+            style={{
+              border: "1px solid #c9c9c9",
+              borderRadius: 8,
+              padding: "10px 14px",
+              fontSize: 14,
+              lineHeight: 1.5,
+            }}
+          >
+            <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+              How this page works
+            </summary>
+            <p style={{ margin: "8px 0 4px" }}>{topic.summary}</p>
+            <ul style={{ margin: "4px 0", paddingLeft: 20 }}>
+              {topic.points.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+            <s-link href="/app/help">Open the full Help page</s-link>
+          </details>
+        </div>
+      ) : null}
       <Outlet />
     </AppProvider>
   );
