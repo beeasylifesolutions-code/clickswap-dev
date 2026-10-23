@@ -119,7 +119,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       message: "Choose your store's category before turning swap on.",
     };
   }
-  if (wantsSwap && !meetsMinimum(shop.ordersLast30)) {
+    if (wantsSwap && !shop.isDevStore && !meetsMinimum(shop.ordersLast30)) {
     return {
       ok: false,
       message: "Swap needs more paid orders in the last 30 days before it can be on.",
