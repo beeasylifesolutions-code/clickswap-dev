@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -52,10 +52,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
   const enabled = json.data?.shop?.enabled?.value !== "false";
 
-  const [slotCount, viewCount] = await Promise.all([
+  const [slotCount, viewCount, pausedAds] = await Promise.all([
     prisma.slot.count({ where: { shopId: shop.id, active: true } }),
     prisma.click.count({
       where: { senderShopId: shop.id, viewId: { not: null } },
+    }),
+    // Live ads that PostSwap has switched off (reports or an unavailable product)
+    prisma.ad.findMany({
+      where: { shopId: shop.id, disabled: true, active: true },
+      select: { id: true, title: true, disabledReason: true },
+      take: 10,
     }),
   ]);
 
@@ -65,6 +71,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     slotsDone: slotCount > 0,
     blocksSeen: viewCount > 0,
     swapDone: shop.swapEnabled && shop.consentAt !== null,
+    pausedAds,
   };
 };
 
@@ -216,7 +223,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Index() {
-  const { offers, enabled, slotsDone, blocksSeen, swapDone } =
+  const { offers, enabled, slotsDone, blocksSeen, swapDone, pausedAds } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const setupFetcher = useFetcher<typeof action>();
@@ -245,6 +252,20 @@ export default function Index() {
   return (
     <s-page heading="Welcome to PostSwap">
       <s-stack gap="large">
+        {pausedAds.length > 0 ? (
+          <s-banner tone="warning" heading="Some of your ads are switched off">
+            <s-stack gap="small">
+              {pausedAds.map((ad) => (
+                <s-text key={ad.id}>
+                  {ad.title}:{" "}
+                  {ad.disabledReason || "switched off by PostSwap"}
+                </s-text>
+              ))}
+              <s-link href="/app/swap">See your ads</s-link>
+            </s-stack>
+          </s-banner>
+        ) : null}
+
         <s-section heading="Get set up in 3 steps">
           <s-stack gap="base">
             <s-box border="base" borderRadius="base" padding="base">

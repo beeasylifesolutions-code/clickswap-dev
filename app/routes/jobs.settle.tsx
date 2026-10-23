@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { ActionFunctionArgs } from "react-router";
 import { settleClicks } from "../settle.server";
+import { checkProductAvailability } from "../availability.server";
 
 function isAllowed(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -15,5 +16,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return new Response("Not allowed", { status: 401 });
   }
   const result = await settleClicks();
+
+  // Runs in the background so the payout answer is never delayed
+  void checkProductAvailability().catch((error) => {
+    console.error("Availability check failed", error);
+  });
+
   return Response.json(result);
 };
