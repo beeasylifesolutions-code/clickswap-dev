@@ -440,6 +440,9 @@ function BarChart({
   title: string;
 }) {
   const max = Math.max(1, ...values);
+    if (values.every((value) => value === 0)) {
+    return <s-text>No data for this period yet.</s-text>;
+  }
   const width = 600;
   const height = 120;
   const step = width / Math.max(1, values.length);
