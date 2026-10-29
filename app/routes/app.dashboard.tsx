@@ -5,9 +5,9 @@ import prisma from "../db.server";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-// Same numbers as the ad picker (plans: 1 Starter, 2 Growth, 3 Scale, 4 Enterprise)
-const DAILY_VIEW_CAP: Record<number, number> = { 1: 15, 2: 60, 3: 200, 4: 1000 };
-const DAILY_CLICK_CAP: Record<number, number> = { 1: 1, 2: 3, 3: 10, 4: 50 };
+// Same numbers as the ad picker (plans: 1 Starter, 2 Growth, 3 Scale, 4 Enterprise).
+// Daily clicks sent from your Thank You page. There is no limit on page views.
+const DAILY_CLICK_CAP: Record<number, number> = { 1: 3, 2: 10, 3: 30, 4: 50 };
 const PLAN_NAMES: Record<number, string> = {
   1: "Starter",
   2: "Growth",
@@ -340,16 +340,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const today = dayKey(new Date(now));
   const plan = shop.plan ?? 1;
-  const viewCap = DAILY_VIEW_CAP[plan] ?? DAILY_VIEW_CAP[1];
   const clickCap = DAILY_CLICK_CAP[plan] ?? DAILY_CLICK_CAP[1];
-  const viewsToday = viewSets.get(today)?.size ?? 0;
   const clicksToday = sent.get(today) ?? 0;
 
   // Growth tier unlocker: how close the store is to its plan limits,
   // and what the next plan adds
   const nextPlan = plan < 4 ? plan + 1 : null;
   const daysAtLimit = labels.filter(
-    (_, index) => viewsSeries[index] >= viewCap || sentSeries[index] >= clickCap,
+    (_, index) => sentSeries[index] >= clickCap,
   ).length;
   const orderCap = PLAN_ORDER_CAP[plan] ?? PLAN_ORDER_CAP[1];
   const overOrders = shop.ordersLast30 > orderCap;
@@ -357,7 +355,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const reasons: string[] = [];
   if (daysAtLimit > 0) {
     reasons.push(
-      `You reached your daily limit on ${daysAtLimit} of the last ${days} days. On those days your Thank You page showed your own products instead of partner ads.`,
+      `You reached your daily click limit on ${daysAtLimit} of the last ${days} days. On those days your Thank You page showed your own products instead of partner ads.`,
     );
   }
   if (overOrders) {
@@ -374,7 +372,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     planName: PLAN_NAMES[plan] ?? "Starter",
     nextName: nextPlan ? PLAN_NAMES[nextPlan] : "",
     nextPrice: nextPlan ? PLAN_PRICE[nextPlan] : "",
-    nextViewCap: nextPlan ? DAILY_VIEW_CAP[nextPlan] : 0,
     nextClickCap: nextPlan ? DAILY_CLICK_CAP[nextPlan] : 0,
     nextOrderCap: nextPlan && nextPlan < 4 ? PLAN_ORDER_CAP[nextPlan] : 0,
     nextIsCustom: nextPlan === 4,
@@ -414,9 +411,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     abTests,
     upgrade,
     planName: PLAN_NAMES[plan] ?? "Starter",
-    viewsToday,
     clicksToday,
-    viewCap,
     clickCap,
     recent: recent.map((click) => ({
       id: click.id,
@@ -440,7 +435,7 @@ function BarChart({
   title: string;
 }) {
   const max = Math.max(1, ...values);
-    if (values.every((value) => value === 0)) {
+  if (values.every((value) => value === 0)) {
     return <s-text>No data for this period yet.</s-text>;
   }
   const width = 600;
@@ -563,12 +558,8 @@ export default function Dashboard() {
                     {up.nextName} ({up.nextPrice} a month)
                   </s-heading>
                   <s-text>
-                    Daily partner-ad page views: {data.viewCap} now, then{" "}
-                    {up.nextViewCap}
-                  </s-text>
-                  <s-text>
-                    Daily clicks you can send: {data.clickCap} now, then{" "}
-                    {up.nextClickCap}
+                    Daily clicks from your Thank You page: {data.clickCap} now,
+                    then {up.nextClickCap}
                   </s-text>
                   <s-text>
                     Paid orders covered each month: up to {up.orderCap} now
@@ -696,17 +687,16 @@ export default function Dashboard() {
           </s-stack>
         </s-section>
 
-        <s-section heading={`Today's limits (${data.planName} plan)`}>
+        <s-section heading={`Today's limit (${data.planName} plan)`}>
           <s-stack direction="block" gap="small">
             <s-text>
-              Page views with partner ads: {data.viewsToday} of {data.viewCap}
+              Clicks sent from your Thank You page: {data.clicksToday} of{" "}
+              {data.clickCap}
             </s-text>
             <s-text>
-              Clicks sent: {data.clicksToday} of {data.clickCap}
-            </s-text>
-            <s-text>
-              When either limit is reached, your Thank You page shows your own
-              products until the counters reset at midnight UTC.
+              Partner ads can show as many times as they like. Once you reach
+              the daily click limit, your Thank You page shows your own
+              products until the counter resets at midnight UTC.
             </s-text>
           </s-stack>
         </s-section>

@@ -16,7 +16,7 @@ export const SETUP_STEPS = [
   },
   {
     title: "Turn on swap (optional)",
-    text: "Swap shows other stores' products on your Thank You page, and yours on theirs. It needs your agreement, a store category, and at least 50 paid orders in the last 30 days. Without swap, your own products still fill every slot.",
+    text: "Swap shows other stores' products on your Thank You page, and yours on theirs. It needs your agreement, a store category, and at least 50 paid orders in the last 30 days. You get 3 free starter credits when you turn it on. Without swap, your own products still fill every slot.",
   },
 ];
 
@@ -73,7 +73,7 @@ export const PAGE_HELP: HelpTopic[] = [
     points: [
       "Credit balance is what you have earned minus what you have spent.",
       "Clicks wait 24 hours before they count as credits. The waiting amounts are shown under the tiles.",
-      "Today's limits show how many partner-ad page views and clicks your plan allows each day. They reset at midnight UTC.",
+      "Today's limit shows how many clicks your Thank You page can send today. It resets at midnight UTC. Partner ads can show any number of times.",
       "Your own products shows views and clicks for each product, and A/B tests show which product is ahead.",
       "Milestones are all-time badges. Once earned, they stay.",
     ],
@@ -84,7 +84,8 @@ export const PAGE_HELP: HelpTopic[] = [
     summary: "Turn on the swap and see your ads.",
     points: [
       "You earn 1 credit when a shopper clicks another store's product on your Thank You page. You spend 1 credit when a shopper clicks your product on another store's page.",
-      "Every store starts at zero credits, so partner ads start showing once you have earned your first credit.",
+      "When you turn swap on, you get 3 free starter credits (once), so your ads can start showing before you earn your first credit.",
+      "Ads rotate fairly: ads that have been shown less recently go first, and ads that earn more clicks are shown a little more.",
       "You must choose your store's category, tick the agreement box, and have 50 paid orders in the last 30 days.",
       "Development (test) stores skip the order minimum and see one clearly labeled sample partner ad instead of real ones.",
       "Your ads come from the products in your Thank You slots.",
@@ -119,6 +120,7 @@ export const PAGE_HELP: HelpTopic[] = [
     points: [
       "The kill switch turns everything off at once. Nothing is uninstalled.",
       "Network swap can be paused at any time. Your pages then show only your own offers.",
+      "Stores in your own category are hidden by default, so your shoppers are not sent to your competitors. Turn on Also show ads from stores in my own category if you want them.",
       "Adult and restricted stores (adult 18+, alcohol, tobacco, weapons, gambling) are hidden unless you choose to show them.",
       "Tick categories to never see ads from those kinds of stores. You can also block single stores by address.",
       "Choose your own store's category honestly. Choosing a different one to avoid the filter breaks the PostSwap rules.",
@@ -129,11 +131,11 @@ export const PAGE_HELP: HelpTopic[] = [
 export const FAQ = [
   {
     q: "Why do I only see my own products on my Thank You page?",
-    a: "Partner ads show only when swap is on, you have earned your first credit, a partner ad is available that passes your safety settings, and you are inside your daily limits. Whenever one of those is missing, your own product fills the slot, so a slot is never empty.",
+    a: "Partner ads show only when swap is on, a partner ad is available that passes your safety settings (stores in your own category are hidden by default), and you have not reached your daily click limit. Whenever one of those is missing, your own product fills the slot, so a slot is never empty.",
   },
   {
     q: "How do credits work?",
-    a: "You earn 1 credit for each verified click on a partner's product on your Thank You page, and you spend 1 credit for each verified click on your product on another store's page. A click counts as a credit after a 24-hour hold.",
+    a: "You earn 1 credit for each verified click on a partner's product on your Thank You page, and you spend 1 credit for each verified click on your product on another store's page. A click counts as a credit after a 24-hour hold. When you turn swap on you also get 3 free starter credits, once.",
   },
   {
     q: "Does PostSwap collect my customers' personal data?",
