@@ -12,6 +12,7 @@ import {
 } from "../orders.server";
 import { ALL_CATEGORIES } from "../categories";
 import { reactivateAds } from "../reactivate.server";
+import { grantStarterCredits } from "../starter.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -143,6 +144,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // on for the products in its Thank You slots.
   if (consent && wantsSwap) {
     await reactivateAds(shop.id);
+        await grantStarterCredits(shop.id);
   }
 
   return { ok: true, error: "", message: "Swap settings saved" };

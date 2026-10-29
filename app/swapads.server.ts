@@ -7,13 +7,19 @@ import { RESTRICTED_CATEGORIES } from "./categories";
 export const MAX_SLOTS = 3;
 
 // Plans: 1 = Starter, 2 = Growth, 3 = Scale, 4 = Enterprise (placeholder, custom later).
-// One page view that shows partner ads counts as one view.
-const DAILY_VIEW_CAP: Record<number, number> = { 1: 15, 2: 60, 3: 200, 4: 1000 };
-const DAILY_CLICK_CAP: Record<number, number> = { 1: 1, 2: 3, 3: 10, 4: 50 };
+// Daily limit on clicks SENT from the store's own page (each one earns a credit).
+// There is no limit on partner-ad page views: showing an ad costs nobody anything,
+// only clicks move credits.
+const DAILY_CLICK_CAP: Record<number, number> = { 1: 3, 2: 10, 3: 30, 4: 50 };
 
 // A new store's ads join the pool only after its page has shown this many
 // partner-ad page views.
 const EARN_FIRST_VIEWS = 5;
+
+// Fair-share rotation looks at how each ad did over this many days
+const FAIR_SHARE_DAYS = 7;
+const MIN_PERFORMANCE = 0.3;
+const MAX_PERFORMANCE = 3;
 
 // Daily counters reset at 00:00 UTC.
 function startOfUtcDay() {
@@ -30,6 +36,47 @@ export type ServedAd = {
   code: string | null;
   token: string;
 };
+
+// Fair-share weight for each ad: ads shown less often than average get a
+// bigger weight, and ads that earn clicks get a bigger weight too. Weak ads
+// fade but never disappear, and brand-new ads start with a good share.
+async function adWeights(adIds: string[]) {
+  const since = new Date(Date.now() - FAIR_SHARE_DAYS * 24 * 60 * 60 * 1000);
+  const [shown, clicked] = await Promise.all([
+    prisma.click.groupBy({
+      by: ["adId"],
+      where: { adId: { in: adIds }, createdAt: { gte: since } },
+      _count: { _all: true },
+    }),
+    prisma.click.groupBy({
+      by: ["adId"],
+      where: {
+        adId: { in: adIds },
+        createdAt: { gte: since },
+        usedAt: { not: null },
+      },
+      _count: { _all: true },
+    }),
+  ]);
+  const shownBy = new Map(shown.map((row) => [row.adId, row._count._all]));
+  const clickedBy = new Map(clicked.map((row) => [row.adId, row._count._all]));
+  let total = 0;
+  for (const id of adIds) total += shownBy.get(id) ?? 0;
+  const average = adIds.length > 0 ? total / adIds.length : 0;
+
+  const weights = new Map<string, number>();
+  for (const id of adIds) {
+    const timesShown = shownBy.get(id) ?? 0;
+    const timesClicked = clickedBy.get(id) ?? 0;
+    // 1 for an ad never shown, falling as it is shown more than the average
+    const freshness = 1 / (1 + timesShown / (average + 5));
+    // Click rate with a starting guess of about 4%, so a few views do not swing it
+    const raw = (25 * (timesClicked + 1)) / (timesShown + 25);
+    const performance = Math.min(MAX_PERFORMANCE, Math.max(MIN_PERFORMANCE, raw));
+    weights.set(id, freshness * performance);
+  }
+  return weights;
+}
 
 // Picks up to MAX_SLOTS swap ads for the store with this domain.
 // Returns an empty list when the store should show its own products instead.
@@ -80,23 +127,11 @@ export async function pickSwapAds(
     }
   }
 
-  // Daily limits: whichever is hit first switches this store to its own products
+  // Daily limit: once this store has sent its clicks for the day, its page
+  // shows its own products until the counters reset
   const plan = me.plan ?? 1;
-  const viewCap = DAILY_VIEW_CAP[plan] ?? DAILY_VIEW_CAP[1];
   const clickCap = DAILY_CLICK_CAP[plan] ?? DAILY_CLICK_CAP[1];
   const since = startOfUtcDay();
-
-  const viewsToday = (
-    await prisma.click.groupBy({
-      by: ["viewId"],
-      where: {
-        senderShopId: me.id,
-        viewId: { not: null },
-        createdAt: { gte: since },
-      },
-    })
-  ).length;
-  if (viewsToday >= viewCap) return [];
 
   const clicksToday = await prisma.click.count({
     where: {
@@ -151,12 +186,19 @@ export async function pickSwapAds(
     .map((slot) => slot.lockedDomain as string)
     .filter((d) => pinnedList.includes(d));
 
-  // Categories this store will not see: the ones it blocked, plus adult and
-  // restricted stores unless this store turned them on.
+  // Categories this store will not see: the ones it blocked, adult and
+  // restricted stores unless this store turned them on, and stores in its own
+  // category (its competitors) unless this store allowed them.
   const hiddenCategories = [
     ...me.blockedCategories,
     ...(me.showRestricted ? [] : RESTRICTED_CATEGORIES),
+    ...(me.showSameCategory || !me.niche ? [] : [me.niche]),
   ];
+
+  // Development (test) stores are kept out of the real pool. The temporary
+  // setting DEV_STORE_TESTING=true lets them swap with each other for testing.
+  // eslint-disable-next-line no-undef
+  const devTesting = process.env.DEV_STORE_TESTING === "true";
 
   // Ads come only from OTHER stores that also have swap on, and never from
   // stores or categories this store blocked, or stores that blocked this store.
@@ -174,7 +216,7 @@ export async function pickSwapAds(
         suspended: false,
         // Earn-first rule: the advertiser has to have shown partner ads first
         poolEligibleAt: { not: null },
-               isDevStore: false, 
+        ...(devTesting ? {} : { isDevStore: false }),
         ...(me.circleOnly ? { id: { in: mateIds } } : {}),
         domain: {
           not: domain,
@@ -188,7 +230,7 @@ export async function pickSwapAds(
     include: {
       shop: { select: { ordersLast30: true, domain: true, id: true } },
     },
-    take: 200,
+    take: 500,
   });
 
   // Advertisers must also meet the order minimum
@@ -210,8 +252,9 @@ export async function pickSwapAds(
 
   if (ads.length === 0) return [];
 
-  // Shuffle, then order: locked stores first, then pinned stores,
-  // then Circle partners, then everyone else
+  // Order: locked stores first, then pinned stores, then Circle partners,
+  // then everyone else. Inside each group, a fair-share weighted draw decides
+  // who goes first: ads shown less often and ads that earn clicks come first.
   const pinnedDomains = new Set(pinnedList);
   const lockedDomains = new Set(lockedList);
   const mateSet = new Set(mateIds);
@@ -223,9 +266,15 @@ export async function pickSwapAds(
         : mateSet.has(ad.shop.id)
           ? 2
           : 3;
-  const shuffled = [...ads]
-    .sort(() => Math.random() - 0.5)
-    .sort((a, b) => rank(a) - rank(b));
+  const weights = await adWeights(ads.map((ad) => ad.id));
+  const drawn = ads
+    .map((ad) => ({
+      ad,
+      key: Math.random() ** (1 / (weights.get(ad.id) ?? 1)),
+    }))
+    .sort((a, b) => b.key - a.key)
+    .map((entry) => entry.ad);
+  const shuffled = drawn.sort((a, b) => rank(a) - rank(b));
 
   // Pick up to MAX_SLOTS ads, never two from the same store
   const seenShops = new Set<string>();

@@ -57,6 +57,7 @@ model Shop {
   // Only show ads from stores that share a Circle with this store
   circleOnly     Boolean @default(false)
     isDevStore     Boolean @default(false)
+      showSameCategory Boolean @default(false)
   // Set once the store has shown its first 5 valid network ads
   poolEligibleAt DateTime?
   createdAt   DateTime  @default(now())

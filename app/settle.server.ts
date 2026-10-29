@@ -3,7 +3,7 @@ import prisma from "./db.server";
 // Limits that stop any one store from earning too many credits.
 // To change a limit, change the number here. Nothing else needs to change.
 // Plans: 1 = Starter, 2 = Growth, 3 = Scale, 4 = Enterprise (placeholder, custom later).
-const DAILY_CLICK_CAP: Record<number, number> = { 1: 1, 2: 3, 3: 10, 4: 50 };
+const DAILY_CLICK_CAP: Record<number, number> = { 1: 3, 2: 10, 3: 30, 4: 50 };
 const BALANCE_CEILING = 2000; // no store can hold more than this many credits
 const PAIR_DAILY_CAP = 10; // paid clicks per day from one store to the same advertiser
 

@@ -42,7 +42,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Development stores never get real partners' ads, so a test click can never
   // cost a real merchant a credit. They see one labeled sample ad instead.
-  const isDev = Boolean(shop?.isDevStore);
+    const isDev = Boolean(shop?.isDevStore) && process.env.DEV_STORE_TESTING !== "true";
   const sampleOn = Boolean(
     isDev &&
       shop &&

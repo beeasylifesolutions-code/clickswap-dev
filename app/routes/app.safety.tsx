@@ -5,6 +5,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { meetsMinimum } from "../orders.server";
+import { grantStarterCredits } from "../starter.server";
 import {
   ALL_CATEGORIES,
   NORMAL_CATEGORIES,
@@ -53,6 +54,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     hasConsent: shop.consentAt !== null,
     niche: shop.niche ?? "",
     showRestricted: shop.showRestricted,
+    showSameCategory: shop.showSameCategory,
     blockedCategories: shop.blockedCategories,
     blockedStores: shop.blockedStores.map((block) => block.domain),
   };
@@ -100,6 +102,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const killSwitch = form.get("killSwitch") !== null;
   const wantsSwap = form.get("swapEnabled") !== null;
   const showRestricted = form.get("showRestricted") !== null;
+  const showSameCategory = form.get("showSameCategory") !== null;
   const nicheRaw = clean(form.get("niche"), 40);
   const niche = ALL_CATEGORIES.includes(nicheRaw) ? nicheRaw : null;
   const blockedCategories = NORMAL_CATEGORIES.filter(
@@ -119,7 +122,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       message: "Choose your store's category before turning swap on.",
     };
   }
-    if (wantsSwap && !shop.isDevStore && !meetsMinimum(shop.ordersLast30)) {
+  if (wantsSwap && !shop.isDevStore && !meetsMinimum(shop.ordersLast30)) {
     return {
       ok: false,
       message: "Swap needs more paid orders in the last 30 days before it can be on.",
@@ -175,9 +178,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       swapEnabled: wantsSwap && shop.consentAt !== null,
       niche,
       showRestricted,
+      showSameCategory,
       blockedCategories,
     },
   });
+
+  // Turning swap on gives the one-time starter credits if the store qualifies
+  if (wantsSwap && shop.consentAt !== null) {
+    await grantStarterCredits(shop.id);
+  }
 
   return { ok: true, message: "Safety settings saved" };
 };
@@ -289,6 +298,22 @@ export default function SafetyPage() {
                   a different one to avoid the filter breaks the PostSwap rules,
                   and the store can be removed.
                 </s-text>
+              </s-stack>
+            </s-section>
+
+            <s-section heading="Stores like yours">
+              <s-stack direction="block" gap="base">
+                <s-text>
+                  By default, stores in the same category as yours are hidden,
+                  so your shoppers are not sent to your competitors, and yours
+                  are not shown on theirs. Turn this on if you want to see
+                  stores like yours too.
+                </s-text>
+                <s-switch
+                  label="Also show ads from stores in my own category"
+                  name="showSameCategory"
+                  defaultChecked={saved.showSameCategory}
+                />
               </s-stack>
             </s-section>
 
